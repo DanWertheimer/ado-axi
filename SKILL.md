@@ -45,15 +45,17 @@ ado-axi work-item list [--state open|all|<State>] [--type <type>] [--assigned-to
                        [--iteration @current|<path>] [--area <path>] [--tag <tag>] [--search <text>]
                        [--query "<raw WIQL>"] [--limit 30]
 ado-axi work-item get <id> [--comments] [--full]       # includes `rev` for compare-and-swap
-ado-axi work-item create --type Task --title "..." [--description "..."] [--assigned-to <user>]
-                         [--parent <id>] [--area <path>] [--iteration <path>] [--tags "a; b"]
+ado-axi work-item create --type Task --title "..." [--description "..."] [--description-format markdown|html]
+                         [--assigned-to <user>] [--parent <id>] [--area <path>] [--iteration <path>] [--tags "a; b"]
 ado-axi work-item update <id> [--state <state>] [--title "..."] [--assigned-to <user>]
+                              [--description "..."] [--description-format markdown|html]
                               [--add-tags a,b] [--remove-tags c] [--if-rev <n>]
                               [--set '{"Microsoft.VSTS.Common.Priority": 1}']
 ado-axi work-item comment <id> --body "..."
 ```
 
 `list` builds WIQL for you; drop to `--query` for anything the flags do not express.
+`--description-format markdown` renders a Markdown description; use `html` only when supplying HTML. The format is only applied when a description is supplied.
 `update` is idempotent — setting a field to its current value reports a no-op and exits 0.
 
 ### Safe concurrent updates

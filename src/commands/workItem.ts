@@ -8,7 +8,7 @@ import { readStdinIfPiped } from "../lib/stdin.js";
 
 const LIST_FLAGS = ["state", "type", "assigned-to", "iteration", "area", "tag", "search", "query", "limit"];
 const GET_FLAGS = ["comments", "relations"];
-const CREATE_FLAGS = ["type", "title", "description", "assigned-to", "area", "iteration", "parent", "tags", "set"];
+const CREATE_FLAGS = ["type", "title", "description", "description-format", "assigned-to", "area", "iteration", "parent", "tags", "set"];
 const UPDATE_FLAGS = [
   "title",
   "state",
@@ -16,6 +16,7 @@ const UPDATE_FLAGS = [
   "area",
   "iteration",
   "description",
+  "description-format",
   "tags",
   "add-tags",
   "remove-tags",
@@ -294,6 +295,19 @@ function setFlags(args: ReturnType<typeof parseArgs>): Array<Record<string, unkn
   return Object.entries(parsed).map(([key, value]) => patch("add", `/fields/${key}`, value));
 }
 
+function descriptionFormat(args: ReturnType<typeof parseArgs>, description: string | undefined): string | undefined {
+  const value = flagString(args, "description-format");
+  if (value === undefined) return undefined;
+  if (description === undefined) {
+    throw new AxiError("--description-format requires --description or a piped description", "VALIDATION_ERROR");
+  }
+  if (value.toLowerCase() === "markdown") return "Markdown";
+  if (value.toLowerCase() === "html") return "Html";
+  throw new AxiError("--description-format must be markdown or html", "VALIDATION_ERROR", [
+    "Use `--description-format markdown` for Markdown or `--description-format html` for HTML",
+  ]);
+}
+
 async function createWorkItem(args: ReturnType<typeof parseArgs>): Promise<Record<string, unknown>> {
   assertKnownFlags(args, CREATE_FLAGS, "work-item create");
   const profile = profileFromArgs(args);
@@ -308,7 +322,13 @@ async function createWorkItem(args: ReturnType<typeof parseArgs>): Promise<Recor
 
   const ops: Array<Record<string, unknown>> = [patch("add", "/fields/System.Title", title)];
   const description = flagString(args, "description");
-  if (description) ops.push(patch("add", "/fields/System.Description", description));
+  if (description !== undefined) {
+    ops.push(patch("add", "/fields/System.Description", description));
+    const format = descriptionFormat(args, description);
+    if (format) ops.push(patch("add", "/multilineFieldsFormat/System.Description", format));
+  } else {
+    descriptionFormat(args, description);
+  }
   const assignee = flagString(args, "assigned-to");
   if (assignee) ops.push(patch("add", "/fields/System.AssignedTo", assignee));
   const area = flagString(args, "area");
@@ -426,6 +446,10 @@ async function updateWorkItem(args: ReturnType<typeof parseArgs>): Promise<Recor
     const op = field === "System.Tags" && currentValue !== "" ? "replace" : "add";
     ops.push(patch(op, `/fields/${field}`, value));
   }
+
+  const description = stdinDescription ?? flagString(args, "description");
+  const format = descriptionFormat(args, description);
+  if (format) ops.push(patch("add", "/multilineFieldsFormat/System.Description", format));
 
   const addTags = flagList(args, "add-tags") ?? [];
   const removeTags = flagList(args, "remove-tags") ?? [];

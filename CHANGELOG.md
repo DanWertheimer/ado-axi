@@ -5,6 +5,16 @@ All notable changes to ado-axi are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-25
+
+### Added
+
+- `work-item create` and `work-item update` accept `--description-format markdown|html`, letting agents explicitly select Azure DevOps multiline-field rendering while retaining the prior behavior when omitted
+
+### Documentation
+
+- Documented description-format selection and Azure DevOps' irreversible Markdown-to-HTML conversion constraint for agents
+
 ## [0.3.1] - 2026-08-21
 
 ### Changed
@@ -70,7 +80,8 @@ Initial public release.
 - Idempotent mutations: setting a work item field or a pull request vote to its current value reports a no-op and exits 0
 - `SKILL.md` in the repo root for on-demand agent discovery
 
-[Unreleased]: https://github.com/jeffreyhaen/ado-axi/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/jeffreyhaen/ado-axi/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/jeffreyhaen/ado-axi/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/jeffreyhaen/ado-axi/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/jeffreyhaen/ado-axi/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jeffreyhaen/ado-axi/releases/tag/v0.2.0
