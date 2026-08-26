@@ -1,5 +1,5 @@
 import { AxiError } from "axi-sdk-js";
-import { assertKnownFlags, flagBool, flagList, flagNumber, flagString, parseArgs } from "../lib/args.js";
+import { assertKnownFlags, flagBool, flagList, flagNumber, flagString, parseArgs, type ParsedArgs } from "../lib/args.js";
 import { request } from "../lib/client.js";
 import { requireProject, type ResolvedProfile } from "../lib/config.js";
 import { profileFromArgs } from "../lib/context.js";
@@ -8,12 +8,14 @@ import { validateRepositoryPath } from "../lib/repositoryPath.js";
 import { readStdinIfPiped } from "../lib/stdin.js";
 
 const LIST_FLAGS = ["repo", "status", "creator", "reviewer", "target", "source", "limit"];
+const LIST_STATUSES = ["active", "draft", "completed", "abandoned", "all"];
 const GET_FLAGS = ["repo", "threads", "commits", "id"];
 const CREATE_FLAGS = ["repo", "source", "target", "title", "description", "reviewers", "draft", "auto-complete", "work-items"];
 const APPROVE_FLAGS = ["repo", "vote"];
 const COMMENT_FLAGS = ["repo", "body", "thread", "file", "line"];
 const UPDATE_FLAGS = ["repo", "title", "description", "draft", "auto-complete"];
 const COMPLETE_FLAGS = ["repo", "squash", "delete-source-branch"];
+const ABANDON_FLAGS = ["repo"];
 const CHECK_FLAGS = ["repo", "limit"];
 const DIFF_FLAGS = ["repo", "limit"];
 const REVIEWER_FLAGS = ["repo", "reviewer", "required"];
@@ -49,7 +51,7 @@ interface PullRequest {
   lastMergeSourceCommit?: { commitId?: string };
   autoCompleteSetBy?: { id?: string; displayName?: string } | null;
   completionOptions?: { mergeStrategy?: string; deleteSourceBranch?: boolean };
-  repository?: { id?: string; name?: string; project?: { id?: string; name?: string } };
+  repository?: { id?: string; name?: string; webUrl?: string; project?: { id?: string; name?: string } };
   reviewers?: Reviewer[];
   _links?: { web?: { href?: string } };
 }
@@ -74,6 +76,8 @@ export async function prCommand(argv: string[]): Promise<Record<string, unknown>
       return updatePr(rest);
     case "complete":
       return completePr(rest);
+    case "abandon":
+      return abandonPr(rest);
     case "checks":
       return checksPr(rest);
     case "diff":
@@ -90,7 +94,7 @@ export async function prCommand(argv: string[]): Promise<Record<string, unknown>
       return commentPr(rest);
     default:
       throw new AxiError(`unknown subcommand \`pr ${sub}\``, "VALIDATION_ERROR", [
-        "Subcommands: list | get | comments | create | update | complete | checks | diff | reviewer | approve | comment",
+        "Subcommands: list | get | comments | create | update | complete | abandon | checks | diff | reviewer | approve | comment",
         "`pr comments <id>` is an alias for `pr get <id> --threads`",
         "Run `ado-axi pr --help` for the full reference",
       ]);
@@ -103,6 +107,28 @@ function refName(ref: string | undefined): string {
 
 function fullRef(value: string): string {
   return value.startsWith("refs/") ? value : `refs/heads/${value}`;
+}
+
+/**
+ * Azure DevOps does not populate `_links.web.href` on pull-request REST
+ * responses, so the browser URL is derived from the repository's `webUrl`.
+ * Falls back to composing the canonical org/project/repo form when a slim
+ * response omits the repository reference.
+ */
+function prWebUrl(
+  pr: PullRequest,
+  profile: ResolvedProfile,
+  project: string,
+  repo: string | undefined,
+): string {
+  const direct = pr._links?.web?.href;
+  if (direct) return direct;
+  const base = pr.repository?.webUrl;
+  if (base) return `${base}/pullrequest/${pr.pullRequestId}`;
+  const repoName = pr.repository?.name ?? repo;
+  if (!repoName) return "";
+  const orgUrl = `https://dev.azure.com/${encodeURIComponent(profile.org)}`;
+  return `${orgUrl}/${encodeURIComponent(project)}/_git/${encodeURIComponent(repoName)}/pullrequest/${pr.pullRequestId}`;
 }
 
 function voteLabel(vote: number | undefined): string {
@@ -137,9 +163,18 @@ async function listPrs(args: ReturnType<typeof parseArgs>): Promise<Record<strin
   const repo = flagString(args, "repo");
   const limit = flagNumber(args, "limit") ?? 30;
   const status = flagString(args, "status") ?? "active";
+  if (!LIST_STATUSES.includes(status)) {
+    throw new AxiError(`--status expects one of ${LIST_STATUSES.join(", ")}`, "VALIDATION_ERROR", [
+      `Received \`${status}\`. Azure DevOps calls a merged pull request \`completed\`.`,
+      "`--status draft` keeps only the active pull requests flagged as drafts",
+    ]);
+  }
+  // `draft` is a client-side refinement: Azure DevOps models drafts as active
+  // pull requests carrying `isDraft`, and rejects `draft` as a search status.
+  const draftOnly = status === "draft";
 
   const query: Record<string, string | number> = {
-    "searchCriteria.status": status,
+    "searchCriteria.status": draftOnly ? "active" : status,
     $top: limit,
   };
   const creator = flagString(args, "creator");
@@ -159,7 +194,8 @@ async function listPrs(args: ReturnType<typeof parseArgs>): Promise<Record<strin
     project,
     query,
   });
-  const prs = result.value ?? [];
+  const fetched = result.value ?? [];
+  const prs = draftOnly ? fetched.filter((pr) => pr.isDraft) : fetched;
 
   if (prs.length === 0) {
     return {
@@ -186,7 +222,7 @@ async function listPrs(args: ReturnType<typeof parseArgs>): Promise<Record<strin
   return {
     org: profile.org,
     project,
-    count: countLine(rows.length, result.count, `${status} pull requests`),
+    count: countLine(rows.length, draftOnly ? rows.length : result.count, `${status} pull requests`),
     "pull-requests": pickFields(rows, flagList(args, "fields")),
     help: [
       "Run `ado-axi pr get <id>` for description, reviewers, and merge status",
@@ -234,7 +270,7 @@ async function getPr(args: ReturnType<typeof parseArgs>): Promise<Record<string,
       merge: pr.mergeStatus ?? "",
       reviews: reviewSummary(pr.reviewers),
       created: shortDate(pr.creationDate),
-      url: pr._links?.web?.href ?? "",
+      url: prWebUrl(pr, profile, project, flagString(args, "repo")),
       description: body.text,
     },
     reviewers: (pr.reviewers ?? []).map((r) => ({
@@ -375,7 +411,7 @@ async function createPr(args: ReturnType<typeof parseArgs>): Promise<Record<stri
       source: refName(created.sourceRefName),
       target: refName(created.targetRefName),
       status: created.isDraft ? "draft" : (created.status ?? ""),
-      url: created._links?.web?.href ?? "",
+      url: prWebUrl(created, profile, project, repo),
     },
     help: [
       `Run \`ado-axi pr get ${created.pullRequestId}\` to view it`,
@@ -546,6 +582,47 @@ async function completePr(args: ReturnType<typeof parseArgs>): Promise<Record<st
   };
   if (outcome === "queued") out.help = [`Run \`ado-axi pr checks ${id}\` to see what completion is waiting for`];
   return out;
+}
+
+async function abandonPr(args: ParsedArgs): Promise<Record<string, unknown>> {
+  assertKnownFlags(args, ABANDON_FLAGS, "pr abandon");
+  const profile = profileFromArgs(args);
+  const project = requireProject(profile, "pr abandon");
+  const id = requirePrId(args);
+  const pr = await fetchPr(profile, id, flagString(args, "repo"), project);
+  if (pr.status === "abandoned") {
+    return { "pull-request": `#${id} is already abandoned (no-op)`, outcome: "abandoned" };
+  }
+  if (pr.status === "completed") {
+    throw new AxiError(`pull request #${id} is already completed and cannot be abandoned`, "VALIDATION_ERROR", [
+      `Run \`ado-axi pr get ${id}\` to see how it was merged`,
+    ]);
+  }
+  const repo = pr.repository?.name ?? flagString(args, "repo");
+  if (!repo) {
+    throw new AxiError(`pull request #${id} lacks repository data`, "PRECONDITION_FAILED", [
+      "Pass --repo <repo> and retry",
+    ]);
+  }
+  const abandoned = await request<PullRequest>(profile, {
+    method: "PATCH",
+    path: `_apis/git/repositories/${encodeURIComponent(repo)}/pullrequests/${id}`,
+    project,
+    body: { status: "abandoned" },
+  });
+  return {
+    abandoned: {
+      id,
+      title: abandoned.title ?? pr.title ?? "",
+      repo,
+      status: abandoned.status ?? "abandoned",
+      source: refName(abandoned.sourceRefName ?? pr.sourceRefName),
+      url: prWebUrl(abandoned, profile, project, repo),
+    },
+    help: [
+      `Run \`ado-axi ref delete --repo ${repo} --name ${refName(abandoned.sourceRefName ?? pr.sourceRefName)}\` to remove the source branch`,
+    ],
+  };
 }
 
 interface PolicyEvaluation {
