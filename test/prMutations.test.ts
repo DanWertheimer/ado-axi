@@ -74,6 +74,28 @@ describe("pr update", () => {
   });
 });
 
+describe("pr abandon", () => {
+  it("abandons an active pull request", async () => {
+    mockRequest.mockResolvedValueOnce(pr).mockResolvedValueOnce({ ...pr, status: "abandoned" });
+
+    const result = await prCommand(["abandon", "42", ...context]);
+
+    expect(mockRequest.mock.calls[1]?.[1]).toMatchObject({
+      method: "PATCH",
+      path: "_apis/git/repositories/Repo/pullrequests/42",
+      body: { status: "abandoned" },
+    });
+    expect(result).toEqual({ abandoned: { id: 42, status: "abandoned" } });
+  });
+
+  it("treats an already abandoned pull request as a no-op", async () => {
+    mockRequest.mockResolvedValueOnce({ ...pr, status: "abandoned" });
+
+    await expect(prCommand(["abandon", "42", ...context])).resolves.toMatchObject({ outcome: "abandoned" });
+    expect(mockRequest).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("pr complete", () => {
   it("treats an already completed PR as a no-op", async () => {
     mockRequest.mockResolvedValueOnce({ ...pr, status: "completed" });

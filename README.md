@@ -93,6 +93,7 @@ ado-axi pr checks 812
 ado-axi pr diff 812 --limit 50
 ado-axi pr reviewer add 812 --reviewer jane@example.com
 ado-axi pr complete 812 --squash --delete-source-branch
+ado-axi pr abandon 812
 ado-axi pr approve 812
 ado-axi ref list --repo Web --limit 50
 ado-axi ref create --repo Web --name feature/agent --source main
@@ -118,7 +119,8 @@ unrelated tags.
 
 `pr update` reads current state and reports unchanged requests as no-ops. `pr complete` includes the
 current source commit, never bypasses policy, reports an already completed PR as a no-op, and
-separates completed, queued, conflict, policy-blocked, and failed outcomes. `pr checks` combines
+separates completed, queued, conflict, policy-blocked, and failed outcomes. `pr abandon` safely
+abandons an active pull request and reports an already abandoned request as a no-op. `pr checks` combines
 policy evaluations and PR statuses; `pr diff` returns changed paths rather than file bodies.
 
 `ref create` requires exactly one explicit source branch or object ID and never overwrites an

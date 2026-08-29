@@ -77,7 +77,7 @@ ado-axi work-item update 4211 --assigned-to me@corp.com --add-tags agent-claimed
 ## Pull requests
 
 ```sh
-ado-axi pr list [--repo <repo>] [--status active|completed|abandoned|all] [--creator @me]
+ado-axi pr list [--repo <repo>] [--status active|draft|completed|abandoned|all] [--creator @me]
                 [--reviewer @me] [--target <branch>] [--limit 30]
 ado-axi pr get <id> [--threads] [--full]   # --full = complete description AND comment text
 ado-axi pr comments <id> [--full]          # alias for `pr get <id> --threads`
@@ -86,6 +86,7 @@ ado-axi pr create --repo <repo> --source <branch> [--target main] --title "..." 
 ado-axi pr update <id> [--title "..."] [--description "..."] [--draft true|false]
                        [--auto-complete true|false]
 ado-axi pr complete <id> [--squash true|false] [--delete-source-branch true|false]
+ado-axi pr abandon <id>
 ado-axi pr checks <id> [--limit 10] [--full]
 ado-axi pr diff <id> [--limit 20] [--full]
 ado-axi pr reviewer list <id>
@@ -97,7 +98,7 @@ ado-axi pr comment <id> --body "..." [--file <path> --line <n>] [--thread <id>]
 `pr list` shows a review tally (`2/3 approved`) so no follow-up call is needed to judge status.
 `pr update` and reviewer mutations report safely detected retries as no-ops. A description may be
 piped to `pr update`. `pr complete` uses the current source commit, never bypasses policy, and treats
-an already completed PR as a no-op. Run `pr checks` before completion to see concise policy/status
+an already completed PR as a no-op. `pr abandon` treats an already abandoned PR as a no-op. Run `pr checks` before completion to see concise policy/status
 counts; use `--full` only when the bounded actionable list is insufficient.
 
 ### Git Bash repository paths

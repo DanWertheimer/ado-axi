@@ -14,6 +14,7 @@ const APPROVE_FLAGS = ["repo", "vote"];
 const COMMENT_FLAGS = ["repo", "body", "thread", "file", "line"];
 const UPDATE_FLAGS = ["repo", "title", "description", "draft", "auto-complete"];
 const COMPLETE_FLAGS = ["repo", "squash", "delete-source-branch"];
+const ABANDON_FLAGS = ["repo"];
 const CHECK_FLAGS = ["repo", "limit"];
 const DIFF_FLAGS = ["repo", "limit"];
 const REVIEWER_FLAGS = ["repo", "reviewer", "required"];
@@ -51,6 +52,7 @@ interface PullRequest {
   completionOptions?: { mergeStrategy?: string; deleteSourceBranch?: boolean };
   repository?: { id?: string; name?: string; project?: { id?: string; name?: string } };
   reviewers?: Reviewer[];
+  url?: string;
   _links?: { web?: { href?: string } };
 }
 
@@ -74,6 +76,8 @@ export async function prCommand(argv: string[]): Promise<Record<string, unknown>
       return updatePr(rest);
     case "complete":
       return completePr(rest);
+    case "abandon":
+      return abandonPr(rest);
     case "checks":
       return checksPr(rest);
     case "diff":
@@ -90,7 +94,7 @@ export async function prCommand(argv: string[]): Promise<Record<string, unknown>
       return commentPr(rest);
     default:
       throw new AxiError(`unknown subcommand \`pr ${sub}\``, "VALIDATION_ERROR", [
-        "Subcommands: list | get | comments | create | update | complete | checks | diff | reviewer | approve | comment",
+        "Subcommands: list | get | comments | create | update | complete | abandon | checks | diff | reviewer | approve | comment",
         "`pr comments <id>` is an alias for `pr get <id> --threads`",
         "Run `ado-axi pr --help` for the full reference",
       ]);
@@ -136,7 +140,9 @@ async function listPrs(args: ReturnType<typeof parseArgs>): Promise<Record<strin
   const project = requireProject(profile, "pr list");
   const repo = flagString(args, "repo");
   const limit = flagNumber(args, "limit") ?? 30;
-  const status = flagString(args, "status") ?? "active";
+  const requestedStatus = flagString(args, "status") ?? "active";
+  const draftOnly = requestedStatus === "draft";
+  const status = draftOnly ? "active" : requestedStatus;
 
   const query: Record<string, string | number> = {
     "searchCriteria.status": status,
@@ -154,16 +160,28 @@ async function listPrs(args: ReturnType<typeof parseArgs>): Promise<Record<strin
   const path = repo
     ? `_apis/git/repositories/${encodeURIComponent(repo)}/pullrequests`
     : "_apis/git/pullrequests";
-  const result = await request<{ value?: PullRequest[]; count?: number }>(profile, {
+  let result = await request<{ value?: PullRequest[]; count?: number }>(profile, {
     path,
     project,
-    query,
+    query: draftOnly ? { ...query, $skip: 0 } : query,
   });
-  const prs = result.value ?? [];
+  const prs = (result.value ?? []).filter((pr) => !draftOnly || pr.isDraft);
+  let skip = (result.value ?? []).length;
+  while (draftOnly && prs.length < limit && (result.value ?? []).length === limit) {
+    result = await request<{ value?: PullRequest[]; count?: number }>(profile, {
+      path,
+      project,
+      query: { ...query, $skip: skip },
+    });
+    const page = result.value ?? [];
+    prs.push(...page.filter((pr) => pr.isDraft));
+    skip += page.length;
+  }
+  prs.splice(limit);
 
   if (prs.length === 0) {
     return {
-      "pull-requests": `0 ${status} pull requests found in ${project}${repo ? `/${repo}` : ""}`,
+      "pull-requests": `0 ${requestedStatus} pull requests found in ${project}${repo ? `/${repo}` : ""}`,
       help: [
         "Run `ado-axi pr list --status completed` to see merged pull requests",
         "Run `ado-axi pr list --status all` to include abandoned ones",
@@ -186,7 +204,7 @@ async function listPrs(args: ReturnType<typeof parseArgs>): Promise<Record<strin
   return {
     org: profile.org,
     project,
-    count: countLine(rows.length, result.count, `${status} pull requests`),
+    count: countLine(rows.length, draftOnly ? undefined : result.count, `${requestedStatus} pull requests`),
     "pull-requests": pickFields(rows, flagList(args, "fields")),
     help: [
       "Run `ado-axi pr get <id>` for description, reviewers, and merge status",
@@ -234,7 +252,7 @@ async function getPr(args: ReturnType<typeof parseArgs>): Promise<Record<string,
       merge: pr.mergeStatus ?? "",
       reviews: reviewSummary(pr.reviewers),
       created: shortDate(pr.creationDate),
-      url: pr._links?.web?.href ?? "",
+      url: pr.url ?? pr._links?.web?.href ?? "",
       description: body.text,
     },
     reviewers: (pr.reviewers ?? []).map((r) => ({
@@ -375,7 +393,7 @@ async function createPr(args: ReturnType<typeof parseArgs>): Promise<Record<stri
       source: refName(created.sourceRefName),
       target: refName(created.targetRefName),
       status: created.isDraft ? "draft" : (created.status ?? ""),
-      url: created._links?.web?.href ?? "",
+      url: created.url ?? created._links?.web?.href ?? "",
     },
     help: [
       `Run \`ado-axi pr get ${created.pullRequestId}\` to view it`,
@@ -459,6 +477,35 @@ async function updatePr(args: ReturnType<typeof parseArgs>): Promise<Record<stri
     body: requested,
   });
   return { updated: { fields: changed.join(", "), ...prSummary(updated) } };
+}
+
+async function abandonPr(args: ReturnType<typeof parseArgs>): Promise<Record<string, unknown>> {
+  assertKnownFlags(args, ABANDON_FLAGS, "pr abandon");
+  const profile = profileFromArgs(args);
+  const project = requireProject(profile, "pr abandon");
+  const id = requirePrId(args);
+  const pr = await fetchPr(profile, id, flagString(args, "repo"), project);
+  if (pr.status === "abandoned") {
+    return { "pull-request": `#${id} is already abandoned (no-op)`, outcome: "abandoned" };
+  }
+  if (pr.status === "completed") {
+    throw new AxiError(`pull request #${id} is completed and cannot be abandoned`, "VALIDATION_ERROR", [
+      "Only active pull requests can be abandoned",
+    ]);
+  }
+  const repo = pr.repository?.name ?? flagString(args, "repo");
+  if (!repo) {
+    throw new AxiError(`could not resolve the repository for pull request ${id}`, "NOT_FOUND", [
+      "Pass --repo <repo> explicitly",
+    ]);
+  }
+  const abandoned = await request<PullRequest>(profile, {
+    method: "PATCH",
+    path: `_apis/git/repositories/${encodeURIComponent(repo)}/pullrequests/${id}`,
+    project,
+    body: { status: "abandoned" },
+  });
+  return { abandoned: { id, status: abandoned.status ?? "" } };
 }
 
 function completionError(error: unknown, id: number): never {
