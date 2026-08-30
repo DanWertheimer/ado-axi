@@ -99,6 +99,8 @@ ado-axi ref list --repo Web --limit 50
 ado-axi ref create --repo Web --name feature/agent --source main
 ado-axi ref delete --repo Web --name feature/agent --old-object-id <40-hex>
 ado-axi pipeline runs --result failed
+ado-axi pipeline timeline 98231
+ado-axi pipeline logs 98231 --failed-only --tail 200
 ado-axi pipeline logs 98231 --tail 200
 ado-axi pipeline watch 98231 --interval 10 --timeout 1800
 ado-axi api _apis/wiki/wikis               # anything not covered by a command
@@ -133,6 +135,13 @@ previously observed version. Existing-at-the-intended-object and already-absent 
 `pipeline watch` polls every 10 seconds by default (minimum 2), stops after 1800 seconds by default,
 and accepts `--interval`/`--timeout` in seconds. Failed, cancelled, timed-out, and unexpected runs
 produce structured output and exit non-zero; successful and partially successful runs exit zero.
+
+### Failure triage
+
+`pipeline timeline <run-id>` returns the stage (or job) outline plus every failed step with its
+parent path, the first error issue, and the log id to read next — one call instead of listing logs
+and guessing which one failed. `pipeline logs <run-id> --failed-only` skips that step and returns
+the first failing step's log directly, naming any further failed steps in `help`.
 
 ## Design
 

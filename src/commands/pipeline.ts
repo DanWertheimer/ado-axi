@@ -8,8 +8,9 @@ import { countLine, personName, pickFields, shortDate, truncate } from "../lib/f
 const LIST_FLAGS = ["limit", "name"];
 const RUNS_FLAGS = ["pipeline", "branch", "status", "result", "requested-for", "limit"];
 const RUN_FLAGS = ["pipeline", "branch", "variables", "parameters"];
-const LOGS_FLAGS = ["log", "tail"];
+const LOGS_FLAGS = ["log", "tail", "failed-only"];
 const WATCH_FLAGS = ["interval", "timeout"];
+const TIMELINE_FLAGS = ["limit"];
 
 interface Pipeline {
   id: number;
@@ -46,11 +47,14 @@ export async function pipelineCommand(argv: string[]): Promise<Record<string, un
       return runPipeline(rest);
     case "logs":
       return buildLogs(rest);
+    case "timeline":
+    case "steps":
+      return buildTimeline(rest);
     case "watch":
       return watchPipeline(rest);
     default:
       throw new AxiError(`unknown subcommand \`pipeline ${sub}\``, "VALIDATION_ERROR", [
-        "Subcommands: list | runs | run | logs | watch",
+        "Subcommands: list | runs | run | logs | timeline | watch",
         "Run `ado-axi pipeline --help` for the full reference",
       ]);
   }
@@ -148,6 +152,9 @@ async function listRuns(args: ReturnType<typeof parseArgs>): Promise<Record<stri
     failures: failed,
     runs: pickFields(rows, flagList(args, "fields")),
     help: [
+      ...(failed > 0
+        ? [`Run \`ado-axi pipeline timeline <run-id>\` to see which step failed`]
+        : []),
       "Run `ado-axi pipeline logs <run-id>` to read the log of a run",
       "Run `ado-axi pipeline run --pipeline <id> --branch <branch>` to queue a new run",
     ],
@@ -331,7 +338,166 @@ async function watchPipeline(args: ReturnType<typeof parseArgs>): Promise<Record
       url: build._links?.web?.href ?? "",
     },
   };
-  if (outcome === "failure") out.help = [`Run \`ado-axi pipeline logs ${runId}\` to inspect the failure`];
+  if (outcome === "failure")
+    out.help = [
+      `Run \`ado-axi pipeline timeline ${runId}\` to find the failing step`,
+      `Run \`ado-axi pipeline logs ${runId} --failed-only\` to read its log`,
+    ];
+  return out;
+}
+
+interface TimelineRecord {
+  id: string;
+  parentId?: string | null;
+  type?: string;
+  name?: string;
+  state?: string;
+  result?: string;
+  startTime?: string;
+  finishTime?: string;
+  order?: number;
+  errorCount?: number;
+  warningCount?: number;
+  log?: { id?: number };
+  issues?: Array<{ type?: string; message?: string }>;
+}
+
+async function fetchTimeline(
+  profile: ReturnType<typeof profileFromArgs>,
+  project: string,
+  buildId: number,
+): Promise<TimelineRecord[]> {
+  const timeline = await request<{ records?: TimelineRecord[] } | null>(profile, {
+    path: `_apis/build/builds/${buildId}/timeline`,
+    project,
+  });
+  return timeline?.records ?? [];
+}
+
+function recordPath(record: TimelineRecord, byId: Map<string, TimelineRecord>): string {
+  const names: string[] = [];
+  let current = record.parentId ? byId.get(record.parentId) : undefined;
+  let guard = 0;
+  while (current && guard++ < 10) {
+    if (current.name) names.unshift(current.name);
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+  return names.join(" / ");
+}
+
+function durationSeconds(record: TimelineRecord): number | "" {
+  if (!record.startTime || !record.finishTime) return "";
+  const seconds = (new Date(record.finishTime).getTime() - new Date(record.startTime).getTime()) / 1000;
+  return Number.isFinite(seconds) ? Math.max(0, Math.round(seconds)) : "";
+}
+
+function isFailure(record: TimelineRecord): boolean {
+  const result = (record.result ?? "").toLowerCase();
+  return result === "failed" || result === "canceled" || result === "cancelled";
+}
+
+/** A failing stage or job repeats the failure of its steps — report only the innermost record. */
+function leafFailures(records: TimelineRecord[]): TimelineRecord[] {
+  const failing = records.filter(isFailure);
+  const parentsOfFailures = new Set(failing.map((r) => r.parentId).filter(Boolean));
+  return failing.filter((r) => !parentsOfFailures.has(r.id));
+}
+
+function firstIssue(record: TimelineRecord, limit: number): string {
+  const issue =
+    (record.issues ?? []).find((i) => (i.type ?? "").toLowerCase() === "error") ?? (record.issues ?? [])[0];
+  if (!issue?.message) return "";
+  return truncate(issue.message.replace(/\s*\n\s*/g, " ").trim(), limit).text;
+}
+
+async function buildTimeline(args: ReturnType<typeof parseArgs>): Promise<Record<string, unknown>> {
+  assertKnownFlags(args, TIMELINE_FLAGS, "pipeline timeline");
+  const profile = profileFromArgs(args);
+  const project = requireProject(profile, "pipeline timeline");
+  const buildId = requireRunId(args, "timeline");
+  const full = flagBool(args, "full");
+  const limit = flagNumber(args, "limit") ?? 20;
+
+  const records = await fetchTimeline(profile, project, buildId);
+  if (records.length === 0) {
+    return {
+      timeline: `0 timeline records for run ${buildId} (it may still be queued)`,
+      help: [`Run \`ado-axi pipeline runs --limit 5\` to check the run's status`],
+    };
+  }
+
+  const byId = new Map(records.map((r) => [r.id, r]));
+  const issueLimit = full ? Number.MAX_SAFE_INTEGER : 300;
+  const stageRecords = records.filter((r) => (r.type ?? "") === "Stage");
+  const jobRecords = records.filter((r) => (r.type ?? "") === "Job");
+  const outline = (stageRecords.length > 0 ? stageRecords : jobRecords)
+    .slice()
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+  const failures = leafFailures(records).sort((a, b) =>
+    (a.startTime ?? "").localeCompare(b.startTime ?? ""),
+  );
+  const shownFailures = full ? failures : failures.slice(0, limit);
+  const errors = records.reduce((sum, r) => sum + (r.errorCount ?? 0), 0);
+  const warnings = records.reduce((sum, r) => sum + (r.warningCount ?? 0), 0);
+  const running = records.filter((r) => (r.state ?? "").toLowerCase() === "inProgress".toLowerCase()).length;
+
+  const out: Record<string, unknown> = {
+    run: {
+      id: buildId,
+      records: records.length,
+      failed: failures.length,
+      running,
+      errors,
+      warnings,
+    },
+    [stageRecords.length > 0 ? "stages" : "jobs"]: outline.map((r) => ({
+      name: r.name ?? "",
+      state: r.state ?? "",
+      result: r.result ?? "",
+      seconds: durationSeconds(r),
+    })),
+  };
+
+  if (shownFailures.length === 0) {
+    out.failures = `0 failed steps on run ${buildId}`;
+  } else {
+    out.failures = shownFailures.map((r) => ({
+      step: r.name ?? "",
+      in: recordPath(r, byId),
+      type: r.type ?? "",
+      result: r.result ?? "",
+      log: r.log?.id ?? "",
+      issue: firstIssue(r, issueLimit),
+    }));
+  }
+
+  if (full) {
+    out.records = records
+      .slice()
+      .sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? ""))
+      .map((r) => ({
+        name: r.name ?? "",
+        type: r.type ?? "",
+        state: r.state ?? "",
+        result: r.result ?? "",
+        log: r.log?.id ?? "",
+        seconds: durationSeconds(r),
+      }));
+  }
+
+  const help: string[] = [];
+  const firstLog = shownFailures.find((r) => r.log?.id !== undefined)?.log?.id;
+  if (firstLog !== undefined) {
+    help.push(`Run \`ado-axi pipeline logs ${buildId} --log ${firstLog} --tail 200\` for the failing step's log`);
+  }
+  if (failures.length > shownFailures.length) {
+    help.push(`Showing ${shownFailures.length} of ${failures.length} failed steps — pass --limit ${failures.length} or --full`);
+  }
+  if (!full && failures.length > 0) {
+    help.push(`Run \`ado-axi pipeline logs ${buildId} --failed-only\` to read the first failing step directly`);
+  }
+  if (help.length > 0) out.help = help;
   return out;
 }
 
@@ -340,6 +506,7 @@ async function buildLogs(args: ReturnType<typeof parseArgs>): Promise<Record<str
   const profile = profileFromArgs(args);
   const project = requireProject(profile, "pipeline logs");
   const buildId = requireRunId(args, "logs");
+  const failedOnly = flagBool(args, "failed-only");
 
   const logs = await request<{ value?: Array<{ id: number; lineCount?: number }>; count?: number }>(
     profile,
@@ -351,9 +518,31 @@ async function buildLogs(args: ReturnType<typeof parseArgs>): Promise<Record<str
   }
 
   const requested = flagNumber(args, "log");
-  const target = requested !== undefined ? entries.find((e) => e.id === requested) : entries[entries.length - 1];
+  let failingStep: TimelineRecord | undefined;
+  let otherFailures: TimelineRecord[] = [];
+  let failedLogId: number | undefined;
+  if (failedOnly && requested === undefined) {
+    const failures = leafFailures(await fetchTimeline(profile, project, buildId))
+      .filter((r) => r.log?.id !== undefined)
+      .sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? ""));
+    failingStep = failures[0];
+    otherFailures = failures.slice(1);
+    if (!failingStep) {
+      return {
+        logs: `0 failed steps with logs on run ${buildId}`,
+        help: [
+          `Run \`ado-axi pipeline timeline ${buildId}\` for the step outline`,
+          `Run \`ado-axi pipeline logs ${buildId}\` for the tail of the last log`,
+        ],
+      };
+    }
+    failedLogId = failingStep.log?.id;
+  }
+
+  const targetId = failedLogId ?? requested;
+  const target = targetId !== undefined ? entries.find((e) => e.id === targetId) : entries[entries.length - 1];
   if (!target) {
-    throw new AxiError(`log ${requested} does not exist on run ${buildId}`, "NOT_FOUND", [
+    throw new AxiError(`log ${targetId} does not exist on run ${buildId}`, "NOT_FOUND", [
       `Available log ids: ${entries.map((e) => e.id).join(", ")}`,
     ]);
   }
@@ -375,12 +564,21 @@ async function buildLogs(args: ReturnType<typeof parseArgs>): Promise<Record<str
       run: buildId,
       id: target.id,
       of: entries.length,
+      step: failingStep?.name ?? "",
+      result: failingStep?.result ?? "",
       lines: lines.length,
       showing: full ? "all" : `last ${Math.min(tail, lines.length)}`,
     },
     content: text.text,
   };
   const help: string[] = [];
+  if (otherFailures.length > 0) {
+    help.push(
+      `${otherFailures.length} more failed step(s): ${otherFailures
+        .map((r) => `${r.name ?? ""} (--log ${r.log?.id})`)
+        .join(", ")}`,
+    );
+  }
   if (!full && lines.length > selected.length) {
     help.push(`Run \`ado-axi pipeline logs ${buildId} --log ${target.id} --full\` for the whole log`);
   }

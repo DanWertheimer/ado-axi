@@ -119,7 +119,8 @@ The CLI rejects Windows paths before creating a thread.
 ado-axi pipeline list [--name <filter>]
 ado-axi pipeline runs [--pipeline <id>] [--branch <branch>] [--result failed] [--limit 20]
 ado-axi pipeline run --pipeline <id> [--branch <branch>] [--variables '{"k":"v"}']
-ado-axi pipeline logs <run-id> [--log <log-id>] [--tail 120] [--full]
+ado-axi pipeline logs <run-id> [--log <log-id>] [--tail 120] [--full] [--failed-only]
+ado-axi pipeline timeline <run-id> [--limit 20] [--full]
 ado-axi pipeline watch <run-id> [--interval 10] [--timeout 1800]
 ```
 
@@ -127,6 +128,9 @@ ado-axi pipeline watch <run-id> [--interval 10] [--timeout 1800]
 default). Failed, cancelled, timed-out, and unexpected outcomes exit non-zero with TOON output.
 
 `logs` returns the tail of the last log by default — pass `--log <id>` for a specific step.
+
+When a run failed, start with `timeline`: it names the failing stage/job/step, includes the first
+error issue, and gives the log id to read. `logs --failed-only` goes straight to that step's log.
 
 ## Repositories
 

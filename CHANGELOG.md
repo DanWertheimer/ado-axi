@@ -5,6 +5,11 @@ All notable changes to ado-axi are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- `pipeline timeline <run-id>` returns the stage/job outline plus every failing leaf step with its parent path, first error issue, and log id in one call
+- `pipeline logs <run-id> --failed-only` reads the first failing step's log directly and names any further failed steps
+
 ## [0.3.2] - 2026-08-25
 
 ### Added
