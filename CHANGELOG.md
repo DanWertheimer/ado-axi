@@ -9,6 +9,7 @@ All notable changes to ado-axi are documented here. This project follows
 
 - `pipeline timeline <run-id>` returns the stage/job outline plus every failing leaf step with its parent path, first error issue, and log id in one call
 - `pipeline logs <run-id> --failed-only` reads the first failing step's log directly and names any further failed steps
+- `pr thread list|reply|resolve|reopen <id>` closes the review loop: bounded thread listings with an unresolved tally, replies (piped stdin supported), `--resolve` in the same call, and no-op detection on unchanged status
 - `test results <run-id>` aggregates published test runs into one passed/failed/not-run tally and lists failing tests with their error messages (`--outcome`, `--run`, `--limit`, `--full`)
 
 ## [0.3.2] - 2026-08-25

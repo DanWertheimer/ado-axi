@@ -88,6 +88,8 @@ ado-axi work-item update 4211 --state "In Progress"
 ado-axi work-item update 4211 --add-tags agent-claimed --if-rev 7   # compare-and-swap claim
 ado-axi pr list --reviewer @me
 ado-axi pr comments 812 --full
+ado-axi pr thread list 812
+ado-axi pr thread reply 812 --thread 5 --body "Fixed in 3f2a1c9" --resolve
 ado-axi pr update 812 --draft false --auto-complete true
 ado-axi pr checks 812
 ado-axi pr diff 812 --limit 50
@@ -125,6 +127,10 @@ current source commit, never bypasses policy, reports an already completed PR as
 separates completed, queued, conflict, policy-blocked, and failed outcomes. `pr abandon` safely
 abandons an active pull request and reports an already abandoned request as a no-op. `pr checks` combines
 policy evaluations and PR statuses; `pr diff` returns changed paths rather than file bodies.
+
+`pr thread list` shows non-system threads with an unresolved tally; `pr thread resolve|reopen`
+changes a thread's status and reports an already-set status as a no-op; `pr thread reply --resolve`
+answers and closes a thread in one command, so review feedback can actually be finished.
 
 `ref create` requires exactly one explicit source branch or object ID and never overwrites an
 existing branch. `ref delete` first resolves the exact branch and sends its current object ID as

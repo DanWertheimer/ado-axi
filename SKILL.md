@@ -93,7 +93,14 @@ ado-axi pr reviewer list <id>
 ado-axi pr reviewer add|remove <id> --reviewer <identity> [--required]
 ado-axi pr approve <id> [--vote approve|approve-with-suggestions|wait-for-author|reject|reset]
 ado-axi pr comment <id> --body "..." [--file <path> --line <n>] [--thread <id>]
+ado-axi pr thread list <id> [--limit 20] [--full]
+ado-axi pr thread reply <id> --thread <n> --body "..." [--resolve]
+ado-axi pr thread resolve|reopen <id> --thread <n> [--status active|fixed|wont-fix|closed|by-design|pending]
 ```
+
+Finish review feedback with `pr thread`: `list` gives thread ids plus an `unresolved` count,
+`reply --resolve` answers and closes a thread in one call, and `resolve`/`reopen` report an
+already-set status as a no-op. A multiline reply may be piped to `pr thread reply`.
 
 `pr list` shows a review tally (`2/3 approved`) so no follow-up call is needed to judge status.
 `pr update` and reviewer mutations report safely detected retries as no-ops. A description may be

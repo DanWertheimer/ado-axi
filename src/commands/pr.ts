@@ -18,6 +18,9 @@ const ABANDON_FLAGS = ["repo"];
 const CHECK_FLAGS = ["repo", "limit"];
 const DIFF_FLAGS = ["repo", "limit"];
 const REVIEWER_FLAGS = ["repo", "reviewer", "required"];
+const THREAD_LIST_FLAGS = ["repo", "limit", "id"];
+const THREAD_STATUS_FLAGS = ["repo", "thread", "status", "id"];
+const THREAD_REPLY_FLAGS = ["repo", "thread", "body", "resolve", "status", "id"];
 const DEFAULT_SUMMARY_LIMIT = 20;
 
 const VOTES: Record<string, number> = {
@@ -70,6 +73,8 @@ export async function prCommand(argv: string[]): Promise<Record<string, unknown>
     case "comments":
     case "threads":
       return getPr({ ...rest, flags: { ...rest.flags, threads: true } });
+    case "thread":
+      return threadPr(rest);
     case "create":
       return createPr(rest);
     case "update":
@@ -94,7 +99,7 @@ export async function prCommand(argv: string[]): Promise<Record<string, unknown>
       return commentPr(rest);
     default:
       throw new AxiError(`unknown subcommand \`pr ${sub}\``, "VALIDATION_ERROR", [
-        "Subcommands: list | get | comments | create | update | complete | abandon | checks | diff | reviewer | approve | comment",
+        "Subcommands: list | get | comments | create | update | complete | abandon | checks | diff | reviewer | approve | comment | thread",
         "`pr comments <id>` is an alias for `pr get <id> --threads`",
         "Run `ado-axi pr --help` for the full reference",
       ]);
@@ -895,4 +900,243 @@ async function commentPr(args: ReturnType<typeof parseArgs>): Promise<Record<str
     comment: { "pull-request": id, thread: thread.id ?? "", file: file ?? "", posted: true },
     help: [`Run \`ado-axi pr get ${id} --threads\` to see the discussion`],
   };
+}
+
+interface Thread {
+  id: number;
+  status?: string;
+  isDeleted?: boolean;
+  threadContext?: { filePath?: string; rightFileStart?: { line?: number } };
+  comments?: Array<{
+    id?: number;
+    author?: unknown;
+    content?: string;
+    commentType?: string;
+    publishedDate?: string;
+  }>;
+}
+
+const THREAD_STATUSES: Record<string, string> = {
+  active: "active",
+  fixed: "fixed",
+  wontfix: "wontFix",
+  "wont-fix": "wontFix",
+  closed: "closed",
+  bydesign: "byDesign",
+  "by-design": "byDesign",
+  pending: "pending",
+};
+
+function normalizeThreadStatus(value: string): string {
+  const status = THREAD_STATUSES[value.toLowerCase()];
+  if (!status) {
+    throw new AxiError(`unknown thread status '${value}'`, "VALIDATION_ERROR", [
+      `Valid values: ${Object.keys(THREAD_STATUSES).join(", ")}`,
+    ]);
+  }
+  return status;
+}
+
+function requireThreadId(args: ReturnType<typeof parseArgs>, usage: string): number {
+  const raw = flagNumber(args, "thread") ?? Number(args.positionals[1]);
+  if (raw === undefined || !Number.isInteger(raw) || raw < 1) {
+    throw new AxiError("--thread <id> is required", "VALIDATION_ERROR", [
+      `Usage: ${usage}`,
+      "Run `ado-axi pr thread list <id>` to find thread ids",
+    ]);
+  }
+  return raw;
+}
+
+function threadPath(repo: string, prId: number): string {
+  return `_apis/git/repositories/${encodeURIComponent(repo)}/pullrequests/${prId}/threads`;
+}
+
+function isSystemThread(thread: Thread): boolean {
+  return !(thread.comments ?? []).some((c) => c.commentType !== "system");
+}
+
+async function resolvePrRepo(
+  profile: ResolvedProfile,
+  id: number,
+  args: ReturnType<typeof parseArgs>,
+  project: string,
+): Promise<string> {
+  const pr = await fetchPr(profile, id, flagString(args, "repo"), project);
+  const repo = pr.repository?.name ?? flagString(args, "repo");
+  if (!repo) {
+    throw new AxiError(`could not resolve the repository for pull request ${id}`, "NOT_FOUND", [
+      "Pass --repo <repo> explicitly",
+    ]);
+  }
+  return repo;
+}
+
+export async function threadPr(args: ReturnType<typeof parseArgs>): Promise<Record<string, unknown>> {
+  const first = args.positionals[0] ?? "list";
+  const sub = /^\d+$/.test(first) ? "list" : first;
+  const rest = sub === first ? { ...args, positionals: args.positionals.slice(1) } : args;
+
+  switch (sub) {
+    case "list":
+      return listThreads(rest);
+    case "resolve":
+      return setThreadStatus(rest, "fixed");
+    case "reopen":
+      return setThreadStatus(rest, "active");
+    case "reply":
+      return replyToThread(rest);
+    default:
+      throw new AxiError(`unknown subcommand \`pr thread ${sub}\``, "VALIDATION_ERROR", [
+        "Subcommands: list | resolve | reply | reopen",
+        "Run `ado-axi pr --help` for the full reference",
+      ]);
+  }
+}
+
+async function listThreads(args: ReturnType<typeof parseArgs>): Promise<Record<string, unknown>> {
+  assertKnownFlags(args, THREAD_LIST_FLAGS, "pr thread list");
+  const profile = profileFromArgs(args);
+  const project = requireProject(profile, "pr thread list");
+  const id = requirePrId(args);
+  const limit = flagNumber(args, "limit") ?? DEFAULT_SUMMARY_LIMIT;
+  const full = flagBool(args, "full");
+  const repo = await resolvePrRepo(profile, id, args, project);
+
+  const response = await request<{ value?: Thread[] }>(profile, {
+    path: threadPath(repo, id),
+    project,
+  });
+  const threads = (response.value ?? []).filter((t) => !t.isDeleted && !isSystemThread(t));
+  if (threads.length === 0) {
+    return {
+      threads: `0 review comment threads on pull request #${id}`,
+      help: [`Run \`ado-axi pr comment ${id} --body "..."\` to start one`],
+    };
+  }
+
+  const unresolved = threads.filter((t) => (t.status ?? "active") === "active" || (t.status ?? "") === "pending");
+  const shown = threads.slice(0, limit);
+  const commentLimit = full ? Number.MAX_SAFE_INTEGER : 200;
+
+  const out: Record<string, unknown> = {
+    "pull-request": id,
+    repo,
+    count: countLine(shown.length, threads.length, "threads"),
+    unresolved: unresolved.length,
+    threads: pickFields(
+      shown.map((t) => {
+        const comments = (t.comments ?? []).filter((c) => c.commentType !== "system");
+        const last = comments[comments.length - 1];
+        return {
+          id: t.id,
+          status: t.status ?? "",
+          file: t.threadContext?.filePath ?? "",
+          line: t.threadContext?.rightFileStart?.line ?? "",
+          comments: comments.length,
+          last: last
+            ? `${personName(last.author)}: ${truncate(htmlToText(last.content ?? ""), commentLimit).text}`
+            : "",
+        };
+      }),
+      flagList(args, "fields"),
+    ),
+  };
+
+  const help: string[] = [];
+  if (unresolved.length > 0) {
+    help.push(`Run \`ado-axi pr thread reply ${id} --thread <id> --body "..." --resolve\` to answer and close one`);
+  }
+  if (!full) help.push(`Run \`ado-axi pr get ${id} --threads --full\` for complete comment text`);
+  out.help = help;
+  return out;
+}
+
+async function fetchThread(
+  profile: ResolvedProfile,
+  repo: string,
+  prId: number,
+  threadId: number,
+  project: string,
+): Promise<Thread> {
+  return request<Thread>(profile, { path: `${threadPath(repo, prId)}/${threadId}`, project });
+}
+
+async function setThreadStatus(
+  args: ReturnType<typeof parseArgs>,
+  fallback: string,
+): Promise<Record<string, unknown>> {
+  assertKnownFlags(args, THREAD_STATUS_FLAGS, "pr thread resolve");
+  const profile = profileFromArgs(args);
+  const project = requireProject(profile, "pr thread resolve");
+  const id = requirePrId(args);
+  const threadId = requireThreadId(args, `ado-axi pr thread resolve ${id} --thread <id>`);
+  const status = normalizeThreadStatus(flagString(args, "status") ?? fallback);
+  const repo = await resolvePrRepo(profile, id, args, project);
+
+  const current = await fetchThread(profile, repo, id, threadId, project);
+  if ((current.status ?? "active") === status) {
+    return {
+      thread: `#${id} thread ${threadId} is already ${status} (no-op)`,
+      status,
+    };
+  }
+
+  const updated = await request<Thread>(profile, {
+    method: "PATCH",
+    path: `${threadPath(repo, id)}/${threadId}`,
+    project,
+    body: { status },
+  });
+
+  return {
+    thread: {
+      "pull-request": id,
+      id: threadId,
+      status: updated.status ?? status,
+      previous: current.status ?? "active",
+    },
+  };
+}
+
+async function replyToThread(args: ReturnType<typeof parseArgs>): Promise<Record<string, unknown>> {
+  assertKnownFlags(args, THREAD_REPLY_FLAGS, "pr thread reply");
+  const profile = profileFromArgs(args);
+  const project = requireProject(profile, "pr thread reply");
+  const id = requirePrId(args);
+  const threadId = requireThreadId(args, `ado-axi pr thread reply ${id} --thread <id> --body "..."`);
+  const body = flagString(args, "body") ?? (await readStdinIfPiped())?.toString("utf8");
+  if (!body) {
+    throw new AxiError("--body is required", "VALIDATION_ERROR", [
+      `Usage: ado-axi pr thread reply ${id} --thread ${threadId} --body "..." [--resolve]`,
+      "A multiline reply may be piped to stdin instead",
+    ]);
+  }
+  const resolve = flagBool(args, "resolve");
+  const status = resolve ? normalizeThreadStatus(flagString(args, "status") ?? "fixed") : undefined;
+  const repo = await resolvePrRepo(profile, id, args, project);
+
+  const comment = await request<{ id?: number }>(profile, {
+    method: "POST",
+    path: `${threadPath(repo, id)}/${threadId}/comments`,
+    project,
+    body: { content: body, commentType: "text" },
+  });
+
+  const out: Record<string, unknown> = {
+    reply: { "pull-request": id, thread: threadId, comment: comment.id ?? "", posted: true },
+  };
+
+  if (status) {
+    const updated = await request<Thread>(profile, {
+      method: "PATCH",
+      path: `${threadPath(repo, id)}/${threadId}`,
+      project,
+      body: { status },
+    });
+    (out.reply as Record<string, unknown>).status = updated.status ?? status;
+  } else {
+    out.help = [`Run \`ado-axi pr thread resolve ${id} --thread ${threadId}\` to close the thread`];
+  }
+  return out;
 }
