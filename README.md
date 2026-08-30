@@ -133,7 +133,8 @@ cat payload.bin | ado-axi api POST _apis/wit/attachments --query 'fileName=paylo
   exits non-zero on failed, cancelled, timed-out, and unexpected runs (poll interval and timeout in
   seconds, 10s/1800s by default).
 
-Per-command detail lives in `ado-axi <command> --help`; the agent-facing guide is [SKILL.md](SKILL.md).
+Every command takes `--help` and answers with a concise reference; that is where per-command
+detail lives, alongside the agent-facing guide in [SKILL.md](SKILL.md).
 
 ## Design
 

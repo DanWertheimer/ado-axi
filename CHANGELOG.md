@@ -5,6 +5,10 @@ All notable changes to ado-axi are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `pr --help` now lists `thread` in its subcommand line
+
 ## [0.4.0] - 2026-08-30
 
 ### Added

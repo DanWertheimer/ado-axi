@@ -72,7 +72,7 @@ export const COMMAND_HELP: Record<string, string> = {
     "  ado-axi work-item link list 4211",
   ].join("\n"),
   pr: [
-    "ado-axi pr <list|get|comments|create|update|complete|abandon|checks|diff|reviewer|approve|comment>",
+    "ado-axi pr <list|get|comments|create|update|complete|abandon|checks|diff|reviewer|approve|comment|thread>",
     "",
     "list    [--repo <repo>] [--status active|draft|completed|abandoned|all] [--creator @me|<name>]",
     "        [--reviewer @me|<name>] [--target <branch>] [--source <branch>] [--limit 30]",
