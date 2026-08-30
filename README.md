@@ -113,9 +113,6 @@ ado-axi api _apis/wiki/wikis               # anything not covered by a command
 cat payload.bin | ado-axi api POST _apis/wit/attachments --query 'fileName=payload.bin' --content-type application/octet-stream
 ```
 
-For `api`, piped stdin is used as the raw request body when `--body` is omitted; `work-item update`,
-`pr update`, and `pr thread reply` accept multiline content through piped stdin too.
-
 ## Behavior
 
 - **Idempotent mutations.** `work-item update`, `pr update`, reviewer changes, `pr thread resolve`,
@@ -130,6 +127,8 @@ For `api`, piped stdin is used as the raw request body when `--body` is omitted;
   aggregates published test runs into failing tests with their error messages.
 - **Bounded output.** Lists take `--limit`/`--fields`, detail views truncate with a `--full` escape
   hatch, and `repo file` refuses folders and binaries.
+- **Piped input.** `api` sends piped stdin as the raw request body when `--body` is omitted;
+  `work-item update`, `pr update`, and `pr thread reply` read multiline content the same way.
 - **Exit codes.** 0 success (including no-ops), 1 runtime error, 2 usage error. `pipeline watch`
   exits non-zero on failed, cancelled, timed-out, and unexpected runs (poll interval and timeout in
   seconds, 10s/1800s by default).
