@@ -16,6 +16,8 @@ export interface RequestOptions {
   apiVersion?: string;
   contentType?: string;
   host?: AdoHost;
+  /** Override the Accept header — build logs and file content need `text/plain`. */
+  accept?: string;
   /** Return the raw response text instead of parsed JSON (logs, files). */
   raw?: boolean;
 }
@@ -54,7 +56,7 @@ export async function request<T = unknown>(
   const method = (options.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = {
     Authorization: credential.header,
-    Accept: "application/json",
+    Accept: options.accept ?? "application/json",
     "User-Agent": "ado-axi",
   };
   let body: string | Uint8Array | undefined;

@@ -410,6 +410,12 @@ function firstIssue(record: TimelineRecord, limit: number): string {
   return truncate(issue.message.replace(/\s*\n\s*/g, " ").trim(), limit).text;
 }
 
+/** Azure DevOps reports `log.id: 0` for steps without a log (manual validation, skipped). */
+function logId(record: TimelineRecord): number | undefined {
+  const id = record.log?.id;
+  return typeof id === "number" && id > 0 ? id : undefined;
+}
+
 async function buildTimeline(args: ReturnType<typeof parseArgs>): Promise<Record<string, unknown>> {
   assertKnownFlags(args, TIMELINE_FLAGS, "pipeline timeline");
   const profile = profileFromArgs(args);
@@ -467,7 +473,7 @@ async function buildTimeline(args: ReturnType<typeof parseArgs>): Promise<Record
       in: recordPath(r, byId),
       type: r.type ?? "",
       result: r.result ?? "",
-      log: r.log?.id ?? "",
+      log: logId(r) ?? "",
       issue: firstIssue(r, issueLimit),
     }));
   }
@@ -481,13 +487,13 @@ async function buildTimeline(args: ReturnType<typeof parseArgs>): Promise<Record
         type: r.type ?? "",
         state: r.state ?? "",
         result: r.result ?? "",
-        log: r.log?.id ?? "",
+        log: logId(r) ?? "",
         seconds: durationSeconds(r),
       }));
   }
 
   const help: string[] = [];
-  const firstLog = shownFailures.find((r) => r.log?.id !== undefined)?.log?.id;
+  const firstLog = shownFailures.map(logId).find((id) => id !== undefined);
   if (firstLog !== undefined) {
     help.push(`Run \`ado-axi pipeline logs ${buildId} --log ${firstLog} --tail 200\` for the failing step's log`);
   }
@@ -523,7 +529,7 @@ async function buildLogs(args: ReturnType<typeof parseArgs>): Promise<Record<str
   let failedLogId: number | undefined;
   if (failedOnly && requested === undefined) {
     const failures = leafFailures(await fetchTimeline(profile, project, buildId))
-      .filter((r) => r.log?.id !== undefined)
+      .filter((r) => logId(r) !== undefined)
       .sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? ""));
     failingStep = failures[0];
     otherFailures = failures.slice(1);
@@ -536,7 +542,7 @@ async function buildLogs(args: ReturnType<typeof parseArgs>): Promise<Record<str
         ],
       };
     }
-    failedLogId = failingStep.log?.id;
+    failedLogId = logId(failingStep);
   }
 
   const targetId = failedLogId ?? requested;
@@ -550,6 +556,7 @@ async function buildLogs(args: ReturnType<typeof parseArgs>): Promise<Record<str
   const content = await request<string>(profile, {
     path: `_apis/build/builds/${buildId}/logs/${target.id}`,
     project,
+    accept: "text/plain",
     raw: true,
   });
 
@@ -575,7 +582,7 @@ async function buildLogs(args: ReturnType<typeof parseArgs>): Promise<Record<str
   if (otherFailures.length > 0) {
     help.push(
       `${otherFailures.length} more failed step(s): ${otherFailures
-        .map((r) => `${r.name ?? ""} (--log ${r.log?.id})`)
+        .map((r) => `${r.name ?? ""} (--log ${logId(r)})`)
         .join(", ")}`,
     );
   }
@@ -583,7 +590,9 @@ async function buildLogs(args: ReturnType<typeof parseArgs>): Promise<Record<str
     help.push(`Run \`ado-axi pipeline logs ${buildId} --log ${target.id} --full\` for the whole log`);
   }
   if (entries.length > 1) {
-    help.push(`Run \`ado-axi pipeline logs ${buildId} --log <id>\` for another step (ids: ${entries.map((e) => e.id).join(", ")})`);
+    help.push(
+      `Run \`ado-axi pipeline timeline ${buildId}\` to map steps to the other ${entries.length - 1} log ids`,
+    );
   }
   if (help.length > 0) out.help = help;
   return out;

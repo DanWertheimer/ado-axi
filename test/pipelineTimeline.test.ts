@@ -97,6 +97,33 @@ describe("pipeline timeline", () => {
   });
 });
 
+describe("pipeline timeline log ids", () => {
+  it("treats `log.id: 0` as no log at all", async () => {
+    const manual = {
+      records: [
+        {
+          id: "t1",
+          type: "Task",
+          name: "ManualValidation",
+          state: "completed",
+          result: "failed",
+          log: { id: 0 },
+        },
+      ],
+    };
+    mockRequest.mockResolvedValueOnce(manual);
+    const result = (await pipelineCommand(["timeline", "42", ...context])) as Record<string, any>;
+    expect(result.failures).toEqual([
+      { step: "ManualValidation", in: "", type: "Task", result: "failed", log: "", issue: "" },
+    ]);
+    expect(result.help?.some((line: string) => line.includes("--log"))).toBe(false);
+
+    mockRequest.mockResolvedValueOnce({ value: [{ id: 5 }] }).mockResolvedValueOnce(manual);
+    const logs = (await pipelineCommand(["logs", "42", "--failed-only", ...context])) as Record<string, any>;
+    expect(logs.logs).toBe("0 failed steps with logs on run 42");
+  });
+});
+
 describe("pipeline logs --failed-only", () => {
   it("reads the first failing step's log and names the remaining failures", async () => {
     mockRequest
@@ -113,6 +140,7 @@ describe("pipeline logs --failed-only", () => {
 
     expect(mockRequest.mock.calls[2]?.[1]).toMatchObject({
       path: "_apis/build/builds/42/logs/7",
+      accept: "text/plain",
       raw: true,
     });
     expect(result.log).toMatchObject({ id: 7, step: "dotnet build", result: "failed" });
