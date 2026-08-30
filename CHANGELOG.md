@@ -7,6 +7,8 @@ All notable changes to ado-axi are documented here. This project follows
 
 ### Added
 
+- `pr abandon <id>` safely abandons an active pull request, refuses completed ones, and reports an already abandoned request as a no-op
+- `pr list --status draft` filters to draft pull requests, paging past non-draft results until the requested `--limit` is reached
 - `pipeline timeline <run-id>` returns the stage/job outline plus every failing leaf step with its parent path, first error issue, and log id in one call
 - `pipeline logs <run-id> --failed-only` reads the first failing step's log directly and names any further failed steps
 - `work-item link list|add <id>` reads and creates relations — parent/child/related work items plus pull request, commit, and branch artifact links — with `--comment`, `--if-rev` compare-and-swap, and no-op detection on duplicates
@@ -14,6 +16,12 @@ All notable changes to ado-axi are documented here. This project follows
 - `repo file <path> --repo <name>` reads a single file's content at the default branch, a `--ref` branch tip, or an exact `--commit`, with line/character truncation, a `--full` escape hatch, and explicit folder/binary refusals
 - `pr thread list|reply|resolve|reopen <id>` closes the review loop: bounded thread listings with an unresolved tally, replies (piped stdin supported), `--resolve` in the same call, and no-op detection on unchanged status
 - `test results <run-id>` aggregates published test runs into one passed/failed/not-run tally and lists failing tests with their error messages (`--outcome`, `--run`, `--limit`, `--full`)
+
+### Fixed
+
+- `pipeline logs` now requests `text/plain`; Azure DevOps was answering the `application/json` Accept header with a single-line JSON envelope, which made `--tail` return one unreadable 700k-character line instead of the last N log lines
+- Timeline steps without a log (manual validation, skipped steps) report `log.id: 0`; these are no longer offered as `--log 0` and no longer make `--failed-only` open the wrong log
+- `pipeline logs` no longer prints every log id of a run in `help` (59 ids on a real run) and points at `pipeline timeline` instead
 
 ## [0.3.2] - 2026-08-25
 
