@@ -5,6 +5,8 @@ All notable changes to ado-axi are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-30
+
 ### Added
 
 - `pr abandon <id>` safely abandons an active pull request, refuses completed ones, and reports an already abandoned request as a no-op
@@ -22,6 +24,10 @@ All notable changes to ado-axi are documented here. This project follows
 - `pipeline logs` now requests `text/plain`; Azure DevOps was answering the `application/json` Accept header with a single-line JSON envelope, which made `--tail` return one unreadable 700k-character line instead of the last N log lines
 - Timeline steps without a log (manual validation, skipped steps) report `log.id: 0`; these are no longer offered as `--log 0` and no longer make `--failed-only` open the wrong log
 - `pipeline logs` no longer prints every log id of a run in `help` (59 ids on a real run) and points at `pipeline timeline` instead
+
+### Documentation
+
+- README behavior sections condensed into one bullet list; per-command detail stays in `--help` and SKILL.md
 
 ## [0.3.2] - 2026-08-25
 
