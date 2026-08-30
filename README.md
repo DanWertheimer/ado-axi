@@ -113,54 +113,28 @@ ado-axi api _apis/wiki/wikis               # anything not covered by a command
 cat payload.bin | ado-axi api POST _apis/wit/attachments --query 'fileName=payload.bin' --content-type application/octet-stream
 ```
 
-Every command supports `--help`. Lists support `--limit` and `--fields a,b`; detail views
-truncate long content and support `--full`. For `api`, piped stdin is used as the raw request body
-when `--body` is omitted; `work-item update` and `pr update` likewise accept a multiline description
-through piped stdin.
+For `api`, piped stdin is used as the raw request body when `--body` is omitted; `work-item update`,
+`pr update`, and `pr thread reply` accept multiline content through piped stdin too.
 
-### Safe mutations and concurrency
+## Behavior
 
-`work-item update` is idempotent and reports unchanged requests as no-ops. Pass `--if-rev <n>` to
-require a compare-and-swap against a revision read from `work-item get`; stale updates fail instead
-of overwriting newer changes. `--add-tags` and `--remove-tags` mutate tags in place, preserving
-unrelated tags. `work-item link add` accepts `--if-rev` too, resolves pull request, commit, and
-branch artifact links itself, and reports an already-present link as a no-op.
+- **Idempotent mutations.** `work-item update`, `pr update`, reviewer changes, `pr thread resolve`,
+  `pr complete`, `pr abandon`, `work-item link add`, and `ref create|delete` report an already
+  applied request as a no-op and exit 0.
+- **Compare-and-swap.** `--if-rev <n>` on `work-item update|link add` fails instead of overwriting a
+  concurrently changed item; `ref delete` sends the branch's current object ID as its guard.
+- **Policy is never bypassed.** `pr complete` sends the current source commit and separates
+  completed, queued, conflict, policy-blocked, and failed outcomes — run `pr checks` first.
+- **Failure triage in one call.** `pipeline timeline` names the failing stage/job/step with its
+  error issue and log id, `pipeline logs --failed-only` opens that log, and `test results`
+  aggregates published test runs into failing tests with their error messages.
+- **Bounded output.** Lists take `--limit`/`--fields`, detail views truncate with a `--full` escape
+  hatch, and `repo file` refuses folders and binaries.
+- **Exit codes.** 0 success (including no-ops), 1 runtime error, 2 usage error. `pipeline watch`
+  exits non-zero on failed, cancelled, timed-out, and unexpected runs (poll interval and timeout in
+  seconds, 10s/1800s by default).
 
-`pr update` reads current state and reports unchanged requests as no-ops. `pr complete` includes the
-current source commit, never bypasses policy, reports an already completed PR as a no-op, and
-separates completed, queued, conflict, policy-blocked, and failed outcomes. `pr abandon` safely
-abandons an active pull request and reports an already abandoned request as a no-op. `pr checks` combines
-policy evaluations and PR statuses; `pr diff` returns changed paths rather than file bodies.
-
-`pr thread list` shows non-system threads with an unresolved tally; `pr thread resolve|reopen`
-changes a thread's status and reports an already-set status as a no-op; `pr thread reply --resolve`
-answers and closes a thread in one command, so review feedback can actually be finished.
-
-`repo file` returns one file's content at a branch tip or an exact commit — useful for a repository
-that is not checked out, or for the target-branch version of a file during review. Output is
-truncated with `--full`, `--limit <lines>` caps the head, folders and binaries are refused.
-
-`ref create` requires exactly one explicit source branch or object ID and never overwrites an
-existing branch. `ref delete` first resolves the exact branch and sends its current object ID as
-Azure DevOps' concurrency guard. Add `--old-object-id <40-hex>` when the caller must assert a
-previously observed version. Existing-at-the-intended-object and already-absent requests are no-ops.
-
-### Pipeline watching
-
-`pipeline watch` polls every 10 seconds by default (minimum 2), stops after 1800 seconds by default,
-and accepts `--interval`/`--timeout` in seconds. Failed, cancelled, timed-out, and unexpected runs
-produce structured output and exit non-zero; successful and partially successful runs exit zero.
-
-### Failure triage
-
-`pipeline timeline <run-id>` returns the stage (or job) outline plus every failed step with its
-parent path, the first error issue, and the log id to read next — one call instead of listing logs
-and guessing which one failed. `pipeline logs <run-id> --failed-only` skips that step and returns
-the first failing step's log directly, naming any further failed steps in `help`.
-
-`test results <run-id>` aggregates every test run published by a pipeline run into one
-passed/failed/not-run tally and lists the failing tests with their error message, so a red build
-never has to be diagnosed from raw logs.
+Per-command detail lives in `ado-axi <command> --help`; the agent-facing guide is [SKILL.md](SKILL.md).
 
 ## Design
 
