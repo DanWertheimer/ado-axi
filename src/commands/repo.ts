@@ -1,12 +1,15 @@
 import { AxiError } from "axi-sdk-js";
-import { assertKnownFlags, flagList, flagNumber, flagString, parseArgs } from "../lib/args.js";
+import { assertKnownFlags, flagBool, flagList, flagNumber, flagString, parseArgs } from "../lib/args.js";
 import { request } from "../lib/client.js";
 import { requireProject } from "../lib/config.js";
 import { profileFromArgs } from "../lib/context.js";
-import { countLine, pickFields, shortDate } from "../lib/format.js";
+import { countLine, pickFields, shortDate, truncate } from "../lib/format.js";
+import { validateRepositoryPath } from "../lib/repositoryPath.js";
 
 const REPO_LIST_FLAGS = ["name", "limit"];
 const BRANCH_FLAGS = ["repo", "limit", "name"];
+const FILE_FLAGS = ["repo", "path", "ref", "commit", "limit"];
+const FILE_CONTENT_LIMIT = 8000;
 
 interface Repository {
   id: string;
@@ -27,9 +30,12 @@ export async function repoCommand(argv: string[]): Promise<Record<string, unknow
       return listRepos(rest);
     case "branches":
       return listBranches(rest);
+    case "file":
+    case "cat":
+      return readFile(rest);
     default:
       throw new AxiError(`unknown subcommand \`repo ${sub}\``, "VALIDATION_ERROR", [
-        "Subcommands: list | branches",
+        "Subcommands: list | branches | file",
         "Run `ado-axi repo --help` for the full reference",
       ]);
   }
@@ -111,6 +117,107 @@ async function listBranches(args: ReturnType<typeof parseArgs>): Promise<Record<
     })),
     help: [`Run \`ado-axi pr create --repo ${repo} --source <branch> --title "<title>"\` to open a pull request`],
   };
+}
+
+interface GitItem {
+  objectId?: string;
+  commitId?: string;
+  path?: string;
+  isFolder?: boolean;
+  gitObjectType?: string;
+  content?: string;
+  latestProcessedChange?: { committer?: { date?: string; name?: string } };
+}
+
+async function readFile(args: ReturnType<typeof parseArgs>): Promise<Record<string, unknown>> {
+  assertKnownFlags(args, FILE_FLAGS, "repo file");
+  const profile = profileFromArgs(args);
+  const project = requireProject(profile, "repo file");
+  const repo = flagString(args, "repo");
+  const path = args.positionals[0] ?? flagString(args, "path");
+  if (!repo || !path) {
+    throw new AxiError("--repo <name> and a file path are required", "VALIDATION_ERROR", [
+      "Usage: ado-axi repo file <path> --repo <name> [--ref <branch>] [--commit <40-hex>]",
+      "Example: ado-axi repo file /src/Program.cs --repo Web --ref main",
+      "Run `ado-axi repo list` to see repository names",
+    ]);
+  }
+  validateRepositoryPath(path, "repo file", "ado-axi repo file ...");
+
+  const ref = flagString(args, "ref");
+  const commit = flagString(args, "commit");
+  if (ref && commit) {
+    throw new AxiError("--ref and --commit are mutually exclusive", "VALIDATION_ERROR", [
+      "Pass --ref <branch> for a branch tip or --commit <40-hex> for an exact revision",
+    ]);
+  }
+  const query: Record<string, string | boolean> = {
+    path: path.startsWith("/") ? path : `/${path}`,
+    includeContent: true,
+    latestProcessedChange: true,
+    $format: "json",
+  };
+  if (commit) {
+    query["versionDescriptor.version"] = commit;
+    query["versionDescriptor.versionType"] = "commit";
+  } else if (ref) {
+    query["versionDescriptor.version"] = ref.replace(/^refs\/heads\//, "");
+    query["versionDescriptor.versionType"] = "branch";
+  }
+
+  const item = await request<GitItem>(profile, {
+    path: `_apis/git/repositories/${encodeURIComponent(repo)}/items`,
+    project,
+    query,
+  });
+
+  if (item.isFolder) {
+    throw new AxiError(`${path} is a folder in ${repo}`, "VALIDATION_ERROR", [
+      "Pass the path of a single file",
+      `Run \`ado-axi pr diff <id>\` to see which files a pull request touches`,
+    ]);
+  }
+
+  const content = item.content ?? "";
+  const bytes = Buffer.byteLength(content, "utf8");
+  const version = commit ?? ref ?? "(default branch)";
+  const meta: Record<string, unknown> = {
+    repo,
+    path: item.path ?? path,
+    ref: version,
+    commit: (item.commitId ?? "").slice(0, 8),
+    bytes,
+    changed: shortDate(item.latestProcessedChange?.committer?.date),
+  };
+
+  if (content.includes("\u0000")) {
+    return {
+      file: { ...meta, content: "binary" },
+      help: ["Binary content is not returned — read it through `ado-axi api` if it is really needed"],
+    };
+  }
+
+  const full = flagBool(args, "full");
+  const lines = content === "" ? [] : content.split("\n");
+  const lineLimit = flagNumber(args, "limit");
+  const selected = !full && lineLimit !== undefined ? lines.slice(0, lineLimit) : lines;
+  const text = truncate(selected.join("\n"), full ? Number.MAX_SAFE_INTEGER : FILE_CONTENT_LIMIT);
+
+  const out: Record<string, unknown> = {
+    file: {
+      ...meta,
+      lines: lines.length,
+      showing: selected.length === lines.length && !text.truncated ? "all" : `first ${selected.length}`,
+    },
+    content: text.text,
+  };
+
+  const help: string[] = [];
+  if (text.truncated || selected.length < lines.length) {
+    help.push(`Run \`ado-axi repo file ${path} --repo ${repo} --full\` for the complete file`);
+  }
+  if (help.length > 0) out.help = help;
+  return out;
 }
 
 export async function projectCommand(argv: string[]): Promise<Record<string, unknown>> {

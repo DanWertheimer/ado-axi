@@ -155,10 +155,16 @@ build is red, `test results` usually answers *what* broke and `pipeline logs --f
 ```sh
 ado-axi repo list [--name <filter>]
 ado-axi repo branches --repo <name> [--name <filter>]
+ado-axi repo file <path> --repo <name> [--ref <branch> | --commit <40-hex>] [--limit <lines>] [--full]
 ado-axi ref list --repo <name> [--name <prefix>] [--limit 50] [--full]
 ado-axi ref create --repo <name> --name <branch> (--source <branch> | --source-object-id <40-hex>)
 ado-axi ref delete --repo <name> --name <branch> [--old-object-id <40-hex>]
 ```
+
+`repo file` reads a single file straight from Azure DevOps: the default branch, a branch tip
+(`--ref`), or an exact revision (`--commit`). Use it for files outside the working copy — another
+repository, or the target-branch version of a file under review. Folders and binaries are refused,
+and paths follow the same `/src/Project/File.cs` form as `pr comment --file`.
 
 Ref creation never overwrites an existing branch. Deletion resolves the exact branch and uses its
 current object ID as the Azure DevOps concurrency guard; `--old-object-id` additionally asserts a

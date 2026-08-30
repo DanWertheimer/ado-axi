@@ -97,6 +97,7 @@ ado-axi pr reviewer add 812 --reviewer jane@example.com
 ado-axi pr complete 812 --squash --delete-source-branch
 ado-axi pr abandon 812
 ado-axi pr approve 812
+ado-axi repo file /src/Program.cs --repo Web --ref main
 ado-axi ref list --repo Web --limit 50
 ado-axi ref create --repo Web --name feature/agent --source main
 ado-axi ref delete --repo Web --name feature/agent --old-object-id <40-hex>
@@ -131,6 +132,10 @@ policy evaluations and PR statuses; `pr diff` returns changed paths rather than 
 `pr thread list` shows non-system threads with an unresolved tally; `pr thread resolve|reopen`
 changes a thread's status and reports an already-set status as a no-op; `pr thread reply --resolve`
 answers and closes a thread in one command, so review feedback can actually be finished.
+
+`repo file` returns one file's content at a branch tip or an exact commit — useful for a repository
+that is not checked out, or for the target-branch version of a file during review. Output is
+truncated with `--full`, `--limit <lines>` caps the head, folders and binaries are refused.
 
 `ref create` requires exactly one explicit source branch or object ID and never overwrites an
 existing branch. `ref delete` first resolves the exact branch and sends its current object ID as
