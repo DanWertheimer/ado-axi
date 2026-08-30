@@ -132,6 +132,17 @@ default). Failed, cancelled, timed-out, and unexpected outcomes exit non-zero wi
 When a run failed, start with `timeline`: it names the failing stage/job/step, includes the first
 error issue, and gives the log id to read. `logs --failed-only` goes straight to that step's log.
 
+## Tests
+
+```sh
+ado-axi test results <run-id> [--outcome failed|passed|aborted|not-executed|all] [--limit 20] [--full]
+ado-axi test results --run <test-run-id>
+```
+
+`<run-id>` is the pipeline run id. Totals are aggregated over every test run the pipeline run
+published; failures carry the error message (truncated — `--full` for the whole message). When a
+build is red, `test results` usually answers *what* broke and `pipeline logs --failed-only` *why*.
+
 ## Repositories
 
 ```sh

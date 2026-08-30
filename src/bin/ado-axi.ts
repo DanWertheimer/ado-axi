@@ -46,6 +46,7 @@ const aliases: Record<string, string> = {
   refs: "ref",
   projects: "project",
   prs: "pr",
+  tests: "test",
 };
 
 function leadingFlagError(flag: string): string {
@@ -65,7 +66,7 @@ function unknownCommand(command: string): string {
     error: `unknown command \`${command}\``,
     code: "VALIDATION_ERROR",
     help: [
-      "Commands: work-item | pr | pipeline | repo | ref | project | api | doctor | config",
+      "Commands: work-item | pr | pipeline | test | repo | ref | project | api | doctor | config",
       "Run `ado-axi --help` for the full command surface",
       "Run `ado-axi` with no arguments for the dashboard",
     ],
@@ -102,6 +103,10 @@ async function projectHandler(args: string[]) {
 
 async function repoHandler(args: string[]) {
   return (await import("../commands/repo.js")).repoCommand(args);
+}
+
+async function testHandler(args: string[]) {
+  return (await import("../commands/test.js")).testCommand(args);
 }
 
 async function refHandler(args: string[]) {
@@ -142,6 +147,8 @@ await runAxiCli({
     prs: prHandler,
     pipeline: pipelineHandler,
     pipelines: pipelineHandler,
+    test: testHandler,
+    tests: testHandler,
     repo: repoHandler,
     repos: repoHandler,
     ref: refHandler,

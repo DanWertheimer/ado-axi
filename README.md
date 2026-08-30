@@ -103,6 +103,7 @@ ado-axi pipeline timeline 98231
 ado-axi pipeline logs 98231 --failed-only --tail 200
 ado-axi pipeline logs 98231 --tail 200
 ado-axi pipeline watch 98231 --interval 10 --timeout 1800
+ado-axi test results 98231                # failing tests of a run, with error messages
 ado-axi api _apis/wiki/wikis               # anything not covered by a command
 cat payload.bin | ado-axi api POST _apis/wit/attachments --query 'fileName=payload.bin' --content-type application/octet-stream
 ```
@@ -142,6 +143,10 @@ produce structured output and exit non-zero; successful and partially successful
 parent path, the first error issue, and the log id to read next — one call instead of listing logs
 and guessing which one failed. `pipeline logs <run-id> --failed-only` skips that step and returns
 the first failing step's log directly, naming any further failed steps in `help`.
+
+`test results <run-id>` aggregates every test run published by a pipeline run into one
+passed/failed/not-run tally and lists the failing tests with their error message, so a red build
+never has to be diagnosed from raw logs.
 
 ## Design
 
