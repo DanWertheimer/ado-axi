@@ -86,6 +86,8 @@ ado-axi work-item list --assigned-to @me  # open work items
 ado-axi work-item get 4211 --comments
 ado-axi work-item update 4211 --state "In Progress"
 ado-axi work-item update 4211 --add-tags agent-claimed --if-rev 7   # compare-and-swap claim
+ado-axi work-item link add 4211 --pr 812                            # attach the pull request
+ado-axi work-item link list 4211
 ado-axi pr list --reviewer @me
 ado-axi pr comments 812 --full
 ado-axi pr thread list 812
@@ -121,7 +123,8 @@ through piped stdin.
 `work-item update` is idempotent and reports unchanged requests as no-ops. Pass `--if-rev <n>` to
 require a compare-and-swap against a revision read from `work-item get`; stale updates fail instead
 of overwriting newer changes. `--add-tags` and `--remove-tags` mutate tags in place, preserving
-unrelated tags.
+unrelated tags. `work-item link add` accepts `--if-rev` too, resolves pull request, commit, and
+branch artifact links itself, and reports an already-present link as a no-op.
 
 `pr update` reads current state and reports unchanged requests as no-ops. `pr complete` includes the
 current source commit, never bypasses policy, reports an already completed PR as a no-op, and

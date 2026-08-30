@@ -9,6 +9,8 @@ All notable changes to ado-axi are documented here. This project follows
 
 - `pipeline timeline <run-id>` returns the stage/job outline plus every failing leaf step with its parent path, first error issue, and log id in one call
 - `pipeline logs <run-id> --failed-only` reads the first failing step's log directly and names any further failed steps
+- `work-item link list|add <id>` reads and creates relations — parent/child/related work items plus pull request, commit, and branch artifact links — with `--comment`, `--if-rev` compare-and-swap, and no-op detection on duplicates
+- `work-item get <id> --relations` now renders the resolved link list it already fetched
 - `repo file <path> --repo <name>` reads a single file's content at the default branch, a `--ref` branch tip, or an exact `--commit`, with line/character truncation, a `--full` escape hatch, and explicit folder/binary refusals
 - `pr thread list|reply|resolve|reopen <id>` closes the review loop: bounded thread listings with an unresolved tally, replies (piped stdin supported), `--resolve` in the same call, and no-op detection on unchanged status
 - `test results <run-id>` aggregates published test runs into one passed/failed/not-run tally and lists failing tests with their error messages (`--outcome`, `--run`, `--limit`, `--full`)

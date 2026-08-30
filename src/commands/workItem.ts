@@ -25,6 +25,26 @@ const UPDATE_FLAGS = [
   "if-rev",
 ];
 const COMMENT_FLAGS = ["body"];
+const LINK_LIST_FLAGS = ["limit"];
+const LINK_ADD_FLAGS = ["parent", "child", "related", "pr", "commit", "branch", "repo", "comment", "if-rev"];
+
+const HIERARCHY: Record<string, string> = {
+  parent: "System.LinkTypes.Hierarchy-Reverse",
+  child: "System.LinkTypes.Hierarchy-Forward",
+  related: "System.LinkTypes.Related",
+};
+
+const RELATION_LABELS: Record<string, string> = {
+  "System.LinkTypes.Hierarchy-Reverse": "parent",
+  "System.LinkTypes.Hierarchy-Forward": "child",
+  "System.LinkTypes.Related": "related",
+  "System.LinkTypes.Dependency-Forward": "successor",
+  "System.LinkTypes.Dependency-Reverse": "predecessor",
+  "System.LinkTypes.Duplicate-Forward": "duplicate",
+  "System.LinkTypes.Duplicate-Reverse": "duplicate-of",
+  AttachedFile: "attachment",
+  Hyperlink: "hyperlink",
+};
 
 const DEFAULT_FIELDS = [
   "System.Id",
@@ -41,7 +61,7 @@ interface WorkItem {
   id: number;
   rev?: number;
   fields?: Record<string, unknown>;
-  relations?: Array<{ rel?: string; url?: string; attributes?: { name?: string } }>;
+  relations?: Array<{ rel?: string; url?: string; attributes?: { name?: string; comment?: string } }>;
   _links?: { html?: { href?: string } };
 }
 
@@ -62,9 +82,12 @@ export async function workItemCommand(argv: string[]): Promise<Record<string, un
       return updateWorkItem(rest);
     case "comment":
       return commentWorkItem(rest);
+    case "link":
+    case "links":
+      return linkWorkItem(rest);
     default:
       throw new AxiError(`unknown subcommand \`work-item ${sub}\``, "VALIDATION_ERROR", [
-        "Subcommands: list | get | create | update | comment",
+        "Subcommands: list | get | create | update | comment | link",
         "Run `ado-axi work-item --help` for the full reference",
       ]);
   }
@@ -238,6 +261,17 @@ async function getWorkItem(args: ReturnType<typeof parseArgs>): Promise<Record<s
     },
   };
 
+  if (flagBool(args, "relations") && relations.length > 0) {
+    out.links = relations.map((relation) => {
+      const described = describeRelation(relation);
+      return {
+        type: described.type,
+        target: described.target,
+        comment: relation.attributes?.comment ?? "",
+      };
+    });
+  }
+
   if (flagBool(args, "comments") && Number(fields["System.CommentCount"] ?? 0) > 0) {
     const comments = await request<{ comments?: Array<{ id: number; text?: string; createdBy?: unknown; createdDate?: string }> }>(
       profile,
@@ -260,6 +294,9 @@ async function getWorkItem(args: ReturnType<typeof parseArgs>): Promise<Record<s
   if (body.truncated) help.push(`Run \`ado-axi work-item get ${id} --full\` for the complete description`);
   if (!flagBool(args, "comments") && Number(fields["System.CommentCount"] ?? 0) > 0) {
     help.push(`Run \`ado-axi work-item get ${id} --comments\` to include ${fields["System.CommentCount"]} comments`);
+  }
+  if (!flagBool(args, "relations") && relations.length > 0) {
+    help.push(`Run \`ado-axi work-item link list ${id}\` to see its ${relations.length} links`);
   }
   if (help.length > 0) out.help = help;
   return out;
@@ -560,3 +597,288 @@ async function commentWorkItem(args: ReturnType<typeof parseArgs>): Promise<Reco
 }
 
 export { requestList };
+
+interface Relation {
+  rel?: string;
+  url?: string;
+  attributes?: { name?: string; comment?: string };
+}
+
+const ARTIFACT_LABELS: Record<string, string> = {
+  "pull request": "pull-request",
+  "fixed in commit": "commit",
+  "fixed in changeset": "changeset",
+  branch: "branch",
+  "integrated in build": "build",
+  "found in build": "build",
+};
+
+/** `vstfs:///Git/PullRequestId/<project>%2F<repo>%2F812` -> `812`, Ref links -> the branch name. */
+function artifactTarget(url: string): string {
+  const decoded = decodeURIComponent(url);
+  const branch = decoded.match(/^vstfs:\/{3}Git\/Ref\/[^/]+\/[^/]+\/GB(.+)$/i);
+  if (branch) return branch[1] as string;
+  return decoded.split("/").filter(Boolean).pop() ?? "";
+}
+
+function describeRelation(relation: Relation): { type: string; target: string | number } {
+  const rel = relation.rel ?? "";
+  const url = relation.url ?? "";
+  if (rel === "ArtifactLink") {
+    const raw = (relation.attributes?.name ?? "artifact").toLowerCase();
+    const name = ARTIFACT_LABELS[raw] ?? raw.replace(/\s+/g, "-");
+    const target = artifactTarget(url);
+    return { type: name, target: /^[0-9a-f]{40}$/i.test(target) ? target.slice(0, 8) : target };
+  }
+  const label = RELATION_LABELS[rel] ?? rel;
+  if (rel === "AttachedFile" || rel === "Hyperlink") {
+    return { type: label, target: relation.attributes?.name ?? url };
+  }
+  const id = Number(url.split("/").pop());
+  return { type: label, target: Number.isFinite(id) ? id : url };
+}
+
+async function linkWorkItem(args: ReturnType<typeof parseArgs>): Promise<Record<string, unknown>> {
+  const first = args.positionals[0] ?? "list";
+  const sub = /^\d+$/.test(first) ? "list" : first;
+  const rest = sub === first ? { ...args, positionals: args.positionals.slice(1) } : args;
+
+  switch (sub) {
+    case "list":
+      return listLinks(rest);
+    case "add":
+      return addLink(rest);
+    default:
+      throw new AxiError(`unknown subcommand \`work-item link ${sub}\``, "VALIDATION_ERROR", [
+        "Subcommands: list | add",
+        "Run `ado-axi work-item --help` for the full reference",
+      ]);
+  }
+}
+
+async function listLinks(args: ReturnType<typeof parseArgs>): Promise<Record<string, unknown>> {
+  assertKnownFlags(args, LINK_LIST_FLAGS, "work-item link list");
+  const profile = profileFromArgs(args);
+  const id = requireId(args, "work-item link list <id>");
+  const limit = flagNumber(args, "limit") ?? 50;
+
+  const item = await request<WorkItem & { relations?: Relation[] }>(profile, {
+    path: `_apis/wit/workitems/${id}`,
+    query: { $expand: "relations" },
+  });
+  const relations = item.relations ?? [];
+  if (relations.length === 0) {
+    return {
+      links: `0 links on work item ${id}`,
+      help: [
+        `Run \`ado-axi work-item link add ${id} --parent <id>\` to place it in the hierarchy`,
+        `Run \`ado-axi work-item link add ${id} --pr <pull-request-id>\` to attach a pull request`,
+      ],
+    };
+  }
+
+  const shown = relations.slice(0, limit);
+  return {
+    "work-item": id,
+    rev: item.rev ?? "",
+    count: countLine(shown.length, relations.length, "links"),
+    links: pickFields(
+      shown.map((relation) => {
+        const described = describeRelation(relation);
+        return {
+          type: described.type,
+          target: described.target,
+          comment: relation.attributes?.comment ?? "",
+        };
+      }),
+      flagList(args, "fields"),
+    ),
+  };
+}
+
+interface ResolvedLink {
+  rel: string;
+  url: string;
+  name?: string;
+  type: string;
+  target: string;
+}
+
+async function artifactLink(
+  profile: ResolvedProfile,
+  args: ReturnType<typeof parseArgs>,
+  project: string,
+  kind: "pr" | "commit" | "branch",
+  value: string,
+): Promise<ResolvedLink> {
+  if (kind === "pr") {
+    const prId = Number(value);
+    if (!Number.isInteger(prId) || prId < 1) {
+      throw new AxiError("--pr expects a pull request id", "VALIDATION_ERROR", [
+        "Run `ado-axi pr list` to find pull request ids",
+      ]);
+    }
+    const repoFlag = flagString(args, "repo");
+    const pr = await request<{ repository?: { id?: string; project?: { id?: string } } }>(profile, {
+      path: repoFlag
+        ? `_apis/git/repositories/${encodeURIComponent(repoFlag)}/pullrequests/${prId}`
+        : `_apis/git/pullrequests/${prId}`,
+      project: repoFlag ? project : undefined,
+    });
+    const repoId = pr.repository?.id;
+    const projectId = pr.repository?.project?.id;
+    if (!repoId || !projectId) {
+      throw new AxiError(`could not resolve the repository of pull request ${prId}`, "NOT_FOUND", [
+        "Pass --repo <repo> explicitly",
+      ]);
+    }
+    return {
+      rel: "ArtifactLink",
+      url: `vstfs:///Git/PullRequestId/${projectId}%2F${repoId}%2F${prId}`,
+      name: "Pull Request",
+      type: "pull-request",
+      target: String(prId),
+    };
+  }
+
+  const repo = flagString(args, "repo");
+  if (kind === "commit" && !/^[0-9a-f]{40}$/i.test(value)) {
+    throw new AxiError("--commit expects a 40-character commit id", "VALIDATION_ERROR", [
+      "Pass the full commit SHA, not an abbreviation",
+    ]);
+  }
+  if (!repo) {
+    throw new AxiError(`--repo <name> is required with --${kind}`, "VALIDATION_ERROR", [
+      `Usage: ado-axi work-item link add <id> --${kind} <value> --repo <name>`,
+      "Run `ado-axi repo list` to see repository names",
+    ]);
+  }
+  const repository = await request<{ id?: string; project?: { id?: string } }>(profile, {
+    path: `_apis/git/repositories/${encodeURIComponent(repo)}`,
+    project,
+  });
+  const repoId = repository.id;
+  const projectId = repository.project?.id;
+  if (!repoId || !projectId) {
+    throw new AxiError(`could not resolve repository '${repo}'`, "NOT_FOUND", [
+      "Run `ado-axi repo list` to see repository names",
+    ]);
+  }
+
+  if (kind === "commit") {
+    return {
+      rel: "ArtifactLink",
+      url: `vstfs:///Git/Commit/${projectId}%2F${repoId}%2F${value}`,
+      name: "Fixed in Commit",
+      type: "commit",
+      target: value.slice(0, 8),
+    };
+  }
+
+  const branch = value.replace(/^refs\/heads\//, "");
+  return {
+    rel: "ArtifactLink",
+    url: `vstfs:///Git/Ref/${projectId}%2F${repoId}%2FGB${encodeURIComponent(branch)}`,
+    name: "Branch",
+    type: "branch",
+    target: branch,
+  };
+}
+
+/** Azure DevOps rewrites work item link URLs with the project GUID, so compare those by id. */
+function sameLink(relation: Relation, link: ResolvedLink): boolean {
+  if ((relation.rel ?? "") !== link.rel) return false;
+  const stored = decodeURIComponent(relation.url ?? "").toLowerCase();
+  const wanted = decodeURIComponent(link.url).toLowerCase();
+  if (link.rel === "ArtifactLink") return stored === wanted;
+  return stored.split("/").pop() === wanted.split("/").pop();
+}
+
+async function addLink(args: ReturnType<typeof parseArgs>): Promise<Record<string, unknown>> {
+  assertKnownFlags(args, LINK_ADD_FLAGS, "work-item link add");
+  const profile = profileFromArgs(args);
+  const project = requireProject(profile, "work-item link add");
+  const id = requireId(args, "work-item link add <id> --parent <id> | --pr <id>");
+
+  const selected = ["parent", "child", "related", "pr", "commit", "branch"].filter(
+    (flag) => flagString(args, flag) !== undefined,
+  );
+  if (selected.length !== 1) {
+    throw new AxiError(
+      selected.length === 0
+        ? "a link target is required"
+        : `pass exactly one link target, got ${selected.join(", ")}`,
+      "VALIDATION_ERROR",
+      [
+        `Usage: ado-axi work-item link add ${id} (--parent <id> | --child <id> | --related <id> | --pr <id> | --commit <40-hex> --repo <name> | --branch <name> --repo <name>)`,
+      ],
+    );
+  }
+  const kind = selected[0] as string;
+  const value = flagString(args, kind) as string;
+
+  let link: ResolvedLink;
+  if (kind in HIERARCHY) {
+    const targetId = Number(value);
+    if (!Number.isInteger(targetId) || targetId < 1) {
+      throw new AxiError(`--${kind} expects a work item id`, "VALIDATION_ERROR", [
+        "Run `ado-axi work-item list` to find ids",
+      ]);
+    }
+    if (targetId === id) throw new AxiError("a work item cannot link to itself", "VALIDATION_ERROR");
+    link = {
+      rel: HIERARCHY[kind] as string,
+      url: `https://dev.azure.com/${profile.org}/_apis/wit/workItems/${targetId}`,
+      type: kind,
+      target: String(targetId),
+    };
+  } else {
+    link = await artifactLink(profile, args, project, kind as "pr" | "commit" | "branch", value);
+  }
+
+  const current = await request<WorkItem & { relations?: Relation[] }>(profile, {
+    path: `_apis/wit/workitems/${id}`,
+    query: { $expand: "relations" },
+  });
+  const existing = (current.relations ?? []).find((relation) => sameLink(relation, link));
+  if (existing) {
+    return {
+      link: `#${id} already links to ${link.target} as ${link.type} (no-op)`,
+      rev: current.rev ?? "",
+    };
+  }
+
+  const ops: Array<Record<string, unknown>> = [];
+  const ifRev = flagNumber(args, "if-rev");
+  if (ifRev !== undefined) ops.push(patch("test", "/rev", ifRev));
+  const comment = flagString(args, "comment");
+  ops.push(
+    patch("add", "/relations/-", {
+      rel: link.rel,
+      url: link.url,
+      attributes: {
+        ...(link.name ? { name: link.name } : {}),
+        ...(comment ? { comment } : {}),
+      },
+    }),
+  );
+
+  const updated = await request<WorkItem>(profile, {
+    method: "PATCH",
+    path: `_apis/wit/workitems/${id}`,
+    project,
+    body: ops,
+    contentType: "application/json-patch+json",
+  });
+
+  return {
+    linked: {
+      "work-item": id,
+      type: link.type,
+      target: link.target,
+      rel: link.rel,
+      rev: updated.rev ?? "",
+    },
+    help: [`Run \`ado-axi work-item link list ${id}\` to see every link`],
+  };
+}

@@ -8,6 +8,7 @@ export const TOP_LEVEL_HELP = [
   'ado-axi work-item create --type Task --title "..."',
   "ado-axi work-item update <id> --state <state>",
   'ado-axi work-item comment <id> --body "..."',
+  "ado-axi work-item link list|add <id>     # parent/child/related, pull request, commit, branch",
   "ado-axi pr list                          # active pull requests [--repo <r>] [--status <s>]",
   "ado-axi pr get <id>                      # detail + reviewers [--threads] [--full]",
   'ado-axi pr create --repo <r> --source <branch> --title "..."',
@@ -42,12 +43,12 @@ export const TOP_LEVEL_HELP = [
 
 export const COMMAND_HELP: Record<string, string> = {
   "work-item": [
-    "ado-axi work-item <list|get|create|update|comment>",
+    "ado-axi work-item <list|get|create|update|comment|link>",
     "",
     "list    [--state open|all|<State>] [--type <type>] [--assigned-to @me|<name>]",
     "        [--iteration @current|<path>] [--area <path>] [--tag <tag>] [--search <text>]",
     '        [--query "<raw WIQL>"] [--limit 30] [--fields id,title,state]',
-    "get     <id> [--comments] [--full]        # includes rev for --if-rev updates",
+    "get     <id> [--comments] [--relations] [--full]   # includes rev for --if-rev updates",
     'create  --type <type> --title "..." [--description "..."] [--description-format markdown|html] [--assigned-to <user>]',
     '        [--area <path>] [--iteration <path>] [--parent <id>] [--tags "a; b"] [--set \'{"Field.Ref": value}\']',
     'update  <id> [--state <state>] [--title "..."] [--assigned-to <user>] [--area <path>]',
@@ -56,6 +57,10 @@ export const COMMAND_HELP: Record<string, string> = {
     "        [--add-tags a,b] [--remove-tags c]  # mutate tags without rewriting the whole string",
     "        [--if-rev <n>]                      # compare-and-swap: fails if the item changed",
     'comment <id> --body "..."',
+    "link list <id> [--limit 50]               # every relation, resolved to ids/artifacts",
+    "link add  <id> (--parent <id> | --child <id> | --related <id> | --pr <id>",
+    "                | --commit <40-hex> --repo <name> | --branch <name> --repo <name>)",
+    '          [--comment "..."] [--if-rev <n>]  # duplicate links are reported as no-ops',
     "",
     "Examples:",
     "  ado-axi work-item list --assigned-to @me --state open",
@@ -63,6 +68,8 @@ export const COMMAND_HELP: Record<string, string> = {
     '  ado-axi work-item update 4211 --state "In Progress"',
     '  ado-axi work-item create --type Task --title "Documentation" --description "# Goal" --description-format markdown',
     "  ado-axi work-item update 4211 --assigned-to me@corp.com --add-tags agent-claimed --if-rev 7",
+    "  ado-axi work-item link add 4211 --pr 812",
+    "  ado-axi work-item link list 4211",
   ].join("\n"),
   pr: [
     "ado-axi pr <list|get|comments|create|update|complete|abandon|checks|diff|reviewer|approve|comment>",
