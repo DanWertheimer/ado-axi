@@ -5,6 +5,10 @@ All notable changes to ado-axi are documented here. This project follows
 
 ## [Unreleased]
 
+### Changed
+
+- Publish the CLI as `@jeffreyhaen/ado-axi` with a GitHub Actions npm release workflow
+
 ### Fixed
 
 - `pr --help` now lists `thread` in its subcommand line
