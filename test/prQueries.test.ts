@@ -70,19 +70,34 @@ describe("pr URLs", () => {
     });
   });
 
-  it("composes the canonical URL when the repository omits webUrl", async () => {
+  it("composes the canonical URL from the pull request project when the repository omits webUrl", async () => {
     mockRequest.mockResolvedValueOnce({
       pullRequestId: 42,
       title: "Title",
       status: "active",
-      repository: { name: "Repo" },
+      repository: { name: "Repo", project: { name: "Other Project" } },
       url: "https://dev.azure.com/test-org/7766233a/_apis/git/repositories/0f3e6729/pullRequests/42",
     });
 
     const result = await prCommand(["get", "42", ...context]);
 
     expect(result["pull-request"]).toMatchObject({
-      url: "https://dev.azure.com/test-org/Project/_git/Repo/pullrequest/42",
+      url: "https://dev.azure.com/test-org/Other%20Project/_git/Repo/pullrequest/42",
+    });
+  });
+
+  it("uses --repo when the pull request omits repository details", async () => {
+    mockRequest.mockResolvedValueOnce({
+      pullRequestId: 42,
+      title: "Title",
+      status: "active",
+      url: "https://dev.azure.com/test-org/7766233a/_apis/git/repositories/0f3e6729/pullRequests/42",
+    });
+
+    const result = await prCommand(["get", "42", "--repo", "Flag Repo", ...context]);
+
+    expect(result["pull-request"]).toMatchObject({
+      url: "https://dev.azure.com/test-org/Project/_git/Flag%20Repo/pullrequest/42",
     });
   });
 

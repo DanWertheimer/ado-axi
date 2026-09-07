@@ -126,7 +126,8 @@ function prWebUrl(pr: PullRequest, profile: ResolvedProfile, project: string, re
   const repoName = pr.repository?.name ?? repo;
   if (!repoName) return "";
   const org = encodeURIComponent(profile.org);
-  return `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_git/${encodeURIComponent(repoName)}/pullrequest/${pr.pullRequestId}`;
+  const projectName = pr.repository?.project?.name ?? project;
+  return `https://dev.azure.com/${org}/${encodeURIComponent(projectName)}/_git/${encodeURIComponent(repoName)}/pullrequest/${pr.pullRequestId}`;
 }
 
 function voteLabel(vote: number | undefined): string {
