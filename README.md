@@ -1,6 +1,7 @@
 # ado-axi (Azure DevOps axi)
 
 [![ci](https://github.com/jeffreyhaen/ado-axi/actions/workflows/ci.yml/badge.svg)](https://github.com/jeffreyhaen/ado-axi/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/%40jeffreyhaen%2Fado-axi.svg)](https://www.npmjs.com/package/@jeffreyhaen/ado-axi)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](package.json)
 
@@ -25,20 +26,18 @@ costs ~55 tokens until the agent actually uses it.
 
 ## Install
 
-No npm publish — run it straight from GitHub:
+Install globally (recommended for repeated use):
 
 ```sh
-npx -y github:jeffreyhaen/ado-axi --help
-```
-
-Or install globally:
-
-```sh
-npm install -g github:jeffreyhaen/ado-axi
+npm install -g @jeffreyhaen/ado-axi
 ado-axi --help
 ```
 
-The `prepare` script builds `dist/` on install, so no build step is needed.
+For a one-off invocation without installing:
+
+```sh
+npx -y @jeffreyhaen/ado-axi --help
+```
 
 ## Agent integration
 
